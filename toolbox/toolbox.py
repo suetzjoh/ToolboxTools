@@ -38,7 +38,7 @@ class ToolboxProject:
 		brp_path = r"D:\git\bretke-postille\BrP 2021-09-22\BrP"
 		aksl_path = r"D:\Hannes\Dateien\Uni\Baltoslavisch\Slavisch\Altkirchenslavisch\AkslToolbox"
 		eng_path = r"D:\Hannes\Dateien\Uni\Germanisch\Englisch\EngToolbox"
-		tocharisch_path =  r"D:\Hannes\Dateien\Uni\Tocharisch\TochToolbox"
+		tocharisch_path = r"D:\Hannes\Dateien\Uni\Tocharisch\TochToolbox"
 		apers_path = r"D:\Hannes\Dateien\Uni\Indoiranisch\Iranisch\ApersToolbox"
 		avest_path = r"D:\Hannes\Dateien\Uni\Indoiranisch\Iranisch\AvestToolbox"
 		preus_path = r"D:\Hannes\Dateien\Uni\Baltoslavisch\Baltisch\Altpreussisch\PreussToolbox"
