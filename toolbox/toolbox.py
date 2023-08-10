@@ -10,7 +10,7 @@ from copy import copy, deepcopy
 class ToolboxProject:
 	#globals
 	class Is:
-		do_read = reexport = in_one_file = load_db = do_check = do_filter = do_reload = ignore_numbers = excel_export = do_zitate = False
+		do_read = reexport = in_one_file = load_db = do_check = do_filter = do_reload = reload_only = ignore_numbers = excel_export = do_zitate = False
 	
 	#Hauptfunktionen
 	def __init__(self, argv):
@@ -26,52 +26,37 @@ class ToolboxProject:
 		self.db_files = []
 		self.text_files = []
 		
-		self.init_args(argv)
-		self.debug_state()
+		self._init_args(argv)
+		self._debug_state()
 		
 		self.load_data()
 		if self.Is.do_read:
 			self.read_toolbox_project()
 	
-	def init_args(self, argv):
-		mcp_path = r"D:\git\mancelius-postille\McP1"
-		brp_path = r"D:\git\bretke-postille\BrP 2021-09-22\BrP"
-		aksl_path = r"D:\Hannes\Dateien\Uni\Baltoslavisch\Slavisch\Altkirchenslavisch\AkslToolbox"
-		eng_path = r"D:\Hannes\Dateien\Uni\Germanisch\Englisch\EngToolbox"
-		tocharisch_path = r"D:\Hannes\Dateien\Uni\Tocharisch\TochToolbox"
-		apers_path = r"D:\Hannes\Dateien\Uni\Indoiranisch\Iranisch\ApersToolbox"
-		avest_path = r"D:\Hannes\Dateien\Uni\Indoiranisch\Iranisch\AvestToolbox"
-		preus_path = r"D:\Hannes\Dateien\Uni\Baltoslavisch\Baltisch\Altpreussisch\PreussToolbox"
-		veda_path = r"D:\Hannes\Dateien\Uni\Indoiranisch\Altindisch\SanskritToolbox"
-			
-		opts, args = getopt.getopt(argv, "ce:f:prz", ["as-one", "reload", "ignore-numbers", "db"]) #c: check, e: excel, f: filter, p: print,
+	def _init_args(self, argv):
+		opts, args = getopt.getopt(argv, "ce:f:prz", ["as-one", "reload=", "reload-only=", "ignore-numbers", "db"]) #c: check, e: excel, f: filter, p: print,
+		
+		config_text = open(os.path.join(os.path.dirname(__file__), "config.txt"), "r", encoding="utf-8").readlines()
+		config_paths = {}
+		for line in config_text:
+			if line[0] == "#":
+				continue
+			if " " in line:
+				key, path = line.strip().split(" ", 1)
+				if key and os.path.isdir(path):
+					for key_variant in key.split(","):
+						config_paths[key_variant] = path
 		
 		for arg in args:
-			if arg.lower() == "mcp":
-				self.toolbox_folder_path = mcp_path
-			elif arg.lower() == "brp":
-				self.toolbox_folder_path = brp_path
-			elif arg.lower() == "aksl":
-				self.toolbox_folder_path = aksl_path
-			elif arg.lower() == "eng":
-				self.toolbox_folder_path = eng_path
-			elif arg.lower() == "toch":
-				self.toolbox_folder_path = tocharisch_path
-			elif arg.lower() == "apers":
-				self.toolbox_folder_path = apers_path
-			elif arg.lower() == "avest":
-				self.toolbox_folder_path = avest_path
-			elif arg.lower() == "preuß":
-				self.toolbox_folder_path = preus_path
-			elif arg.lower() == "veda":
-				self.toolbox_folder_path = veda_path
+			if arg in config_paths.keys():
+				self.toolbox_folder_path = config_paths[arg]
 			elif os.path.isdir(arg):
 				self.toolbox_folder_path = arg
 				
 			else:
-				self.toolbox_folder_path = preus_path
-				print("Kein Pfad vorgegeben. Der voreingestellte Pfad wird verwendet.")
-	
+				print("Kein Pfad vorgegeben.")
+				quit()
+				
 		self.folder_path = os.path.basename(self.toolbox_folder_path)
 		self.log_path = os.path.basename(self.toolbox_folder_path) + "_log.csv"
 		self.out_path = os.path.basename(self.toolbox_folder_path) + "_annotation.csv"
@@ -83,13 +68,26 @@ class ToolboxProject:
 		self.Is.ignore_numbers = any([opt == "--ignore-numbers" for opt,arg in opts])
 		
 		if self.Is.reexport:
-			if not os.path.exists(folder_path):
-				os.mkdir(folder_path)
+			if not os.path.exists(self.folder_path):
+				os.mkdir(self.folder_path)
 		
 		for opt,arg in opts:
 			if opt == "-e":
 				self.Is.excel_export = os.path.join(self.folder_path, arg)
-		
+			
+			if opt == "--reload": 
+				read_path = arg
+				if os.path.isdir(read_path):
+					for xml_file in [os.path.join(read_path, file) for file in os.listdir(read_path) if os.path.splitext(file)[1] == ".xml"]:
+						print("loading", xml_file)
+						self.read_original(xml_file)
+					if self.raw_xml:	
+						self.Is.do_reload = True
+				else:
+					print("Es wurde ein ungültiger Pfad angegeben. Bitte geben Sie den absoluten Pfad zu dem Verzeichnis mit der XML-Datei an, die den Originaltext enthält, der in das Toolbox-Projekt neugeladen werden soll.")
+				
+			if opt == "--reload-only":
+				self.Is.reload_only = re.compile(arg)
 		
 		self.Is.do_check = any([opt == "-c" for opt,arg in opts])
 		self.Is.load_db = any([opt == "--db" for opt,arg in opts]) or self.Is.do_check
@@ -102,8 +100,9 @@ class ToolboxProject:
 			self.Is.do_filter = [arg.strip("\"") for opt,arg in opts if opt == "-f"]
 			
 			if self.Is.do_filter:
-				self.filters = [[line.split(";")[0]+line.split(";")[1], line.split(";")[0]+line.split(";")[2], line.split(";")[3].strip()] for line in open(self.filter_path, "r", encoding="utf-8").readlines() if re.match("(.+?_[I\d]+_);(\d+)\.([\d\S]+);(\d+)\.([\d\S]+);\S", line)]	
-	def debug_state(self):
+				self.filters = [[line.split(";")[0]+line.split(";")[1], line.split(";")[0]+line.split(";")[2], line.split(";")[3].strip()] for line in open(self.filter_path, "r", encoding="utf-8").readlines() if re.match("(.+?_[I\d]+_);(\d+)\.([\d\S]+);(\d+)\.([\d\S]+);\S", line)]
+				
+	def _debug_state(self):
 		if not self.Is.do_read:
 			print(self.toolbox_folder_path + "\n")
 			
@@ -253,7 +252,7 @@ class ToolboxProject:
 		
 		if self.words:
 			if self.Is.reexport:	
-				self.list_to_toolbox(self.words, root_marker)
+				self.list_to_toolbox(self.words, markers, root_marker)
 				
 			print("saving", self.out_path)
 			print(len(self.words), "words")
@@ -272,7 +271,7 @@ class ToolboxProject:
 				print("no log\n")		
 		else:
 			print("Die gelesenen Daten sind leer. Wurde vlt. ein falscher Filter ausgewählt? Es wurden keine Änderungen an vorher durchgeführten Exporten vorgenommen.\n")
-			
+	
 	#Hilfsfunktionen
 	def split_toolbox_reference(self, stelle):
 		if "-" in stelle:
@@ -624,154 +623,8 @@ class ToolboxProject:
 				
 				decoded_table = [ddict for llist in decode_words(marker, table, prefix) for ddict in llist]
 				
-				
 				if self.Is.do_reload:
-					if len(set([ddict["ref"] for ddict in decoded_table])) > 1:
-						input(decoded_table)
-					
-					ii = 0
-					if ref_marker and ref_marker != decoded_table[0]["ref"] or ref_marker == "":
-						uu = 0
-					
-					ref_marker = decoded_table[0]["ref"]
-					if ref_marker in raw_xml:
-						xml_tx = raw_xml[ref_marker]
-						xml_lst = xml_tx.split(" ")
-					else:
-						break
-					
-					#print(ref_marker)
-					#print(" ".join([ddict["tx"] for ddict in decoded_table]).strip())
-					#print(xml_tx)
-					
-					while ii < len(decoded_table):
-						toolbox_tx = decoded_table[ii]["tx"]
-						toolbox_tx = re.sub(" +", " ", toolbox_tx)
-						
-						
-						tx2 = xml_lst[uu]
-						while tx2 in ["„", "‚", "“", "‘"]:
-							uu += 1
-							tx2 = xml_lst[uu]
-							
-						tx1 = re.sub(' ', ' ', toolbox_tx)
-						if tx1[-1] == "\n":
-							tx2 += "\n"
-						
-						tx2_joints = tx2.count("⸗") + tx2.count("-") + tx2.count("=")
-						tx1_breaks = tx1.count(" ")
-						
-						#print(ii, tx1, tx1 == tx2, tx2)
-						if not tx1 == tx2:		
-							if ii+1 == len(decoded_table): #
-								tx2 = " ".join(xml_lst[uu:])
-								if tx1[-1] == "\n":
-									tx2 += "\n"
-									
-								if decoded_table[ii]["tx"] == tx2: #es fehlen lediglich Annotationen, der Rest ist identisch
-									uu += tx2.count(" ") 
-									break
-								elif uu+tx1_breaks+1 < len(xml_lst) and decoded_table[ii]["tx"] == xml_lst[uu+tx1_breaks+1] + "\n": #und nicht auf der nächsten Zeile noch ein anderes Wort dazwischen gerutscht ist (passiert bei Zeilen mit Zwei wörtern, wenn darüber ein Zeilenumbruch eingefügt wird),
-									print(ref_marker, "initial surplus word. Possible line break?")
-									uu += 1
-									continue
-									
-								#das Wort oder die Phrase ist äquivalent zu allem, was folgt. Dadurch ist ein index-overflow im Folgenden ausgeschlossen
-									
-							elif tx1[0] == "@": #Spannenannotationen werden übersprüngen und ggf. rückwirkend korrigiert
-								ii += 1
-								continue
-								
-							elif tx1 == " ".join(xml_lst[uu:uu+tx1_breaks+1]): #in diesem Fall stimmen beide Teile überein, sobald man die Leerzeichen berücksichtigt. Das ist der Fall, wenn Nobreak-Spaces oder Leerzeichen im Text vorhanden sind. Letzeteres kann bei unvollständigen Annotationen auftreten
-								tx2 = " ".join(xml_lst[uu:uu+tx1_breaks+1])
-								if tx1[-1] == "\n":
-									tx2 += "\n"
-									
-								uu += tx1_breaks + 1
-								ii += 1
-								continue
-								
-							elif decoded_table[ii+1]["tx"] == xml_lst[uu+1]: #wenn das nächste Wort übereinstimmt, liegt hier Äquivalenz vor und es kann ausgetauscht werden
-								tx2 = xml_lst[uu]
-								
-							elif decoded_table[ii+2]["tx"] == xml_lst[uu+tx1_breaks+1]: #das übernächste Wort stimmt überein
-								if not tx1_breaks: # wenn keine Leerzeichen oder Nbksp vorhanden sind, die auf eine Zusammenrückung in der Korrektur hinweisen, wurde wahrscheinlich ein Wort gelöscht
-									print("deleted '" + decoded_table[ii]["tx"] + "' at index", ii, "in", ref_marker)
-									decoded_table = decoded_table[:ii] + decoded_table[ii+1:]
-									
-									continue
-									
-								else:
-									print(ref_marker)
-									print(" ".join([ddict["tx"] for ddict in decoded_table]))
-									print(xml_tx)
-									print(ii, uu, tx1_breaks)
-									print("breaks")
-									input()
-									
-							elif decoded_table[ii]["tx"] == xml_lst[uu+tx1_breaks+1]: #Das Wort wurde in der XML-Datei gelöscht
-								if not tx1_breaks: # wenn keine Leerzeichen oder Nbksp vorhanden sind, die auf eine Zusammenrückung in der Korrektur hinweisen, wurde wahrscheinlich ein Wort gelöscht
-									if ii == 0: #am Anfang der Zeile deuten Löschungen auf Zeilenumbrüche hin
-										print(ref_marker, "initial surplus word. Possible line break?")
-									
-									else:
-										print(ref_marker)
-										print(" ".join([ddict["tx"] for ddict in decoded_table]))
-										print(xml_tx)
-										print(ii, uu, tx1_breaks)
-										print("deleted in-place")
-									
-									input()
-									
-									uu += 1
-									continue
-									
-								else:
-									print(ref_marker)
-									print(" ".join([ddict["tx"] for ddict in decoded_table]))
-									print(xml_tx)
-									print(ii, uu, tx1_breaks)
-									print("breaks in-place")
-									input()
-								
-								
-							else:
-								print(ref_marker)
-								print(" ".join([ddict["tx"] for ddict in decoded_table]).strip())
-								print(xml_tx)
-								
-								print("Please check the source file and try again")
-								
-								input()
-								break
-								
-								
-							if ("|" not in tx2) and ("|" in tx1):
-								print(ref_marker, "please add a linebreak to the xml")
-								return
-							
-							existing_annotations = [entry for entry in self.db_words[markers[marker]["jumps"][0]["dbtyp"]] if entry[marker].strip("\n").replace(' ', ' ') == toolbox_tx.strip("\n")]
-							if existing_annotations: 
-								if not [entry for entry in self.db_words[markers[marker]["jumps"][0]["dbtyp"]] if entry[marker].strip("\n").replace(' ', ' ') == tx1.strip("\n")]:
-									for ann in existing_annotations:
-										new_ann = dict(copy(ann), **{marker : tx1.replace(' ', ' ').strip("\n") + "\n"})
-										self.db_words[markers[marker]["jumps"][0]["dbtyp"]].append(new_ann)
-										print("new", new_ann)
-							
-							yy = 1 #Behandlung von Spannen
-							while yy < ii and "@" + decoded_table[ii]["tx"] == decoded_table[ii-yy]["tx"]:
-								decoded_table[ii-yy]["tx"] = "@" + tx2
-								
-								print("@@@")
-								input(" ".join([ddict["tx"] for ddict in decoded_table]))
-							
-							if not ("|" in tx2 or len(decoded_table) == 1):
-								print(ref_marker, decoded_table[ii]["tx"], "→", tx2)
-							decoded_table[ii]["tx"] = tx2
-							
-						
-						uu += 1
-						ii += 1
+					decoded_table = self.reload_original(decoded_table)
 					
 				for dictt in decoded_table:
 					#wenn die Wörter hier korrigiert werden, wird die Laufzeit um mehrere Stunden verkürzt
@@ -987,7 +840,7 @@ class ToolboxProject:
 			return string
 			
 		def current_file_path():
-			path = os.path.join(os.path.basename(toolbox_folder_path), current_file_name + ".txt")
+			path = os.path.join(os.path.basename(self.toolbox_folder_path), current_file_name + ".txt")
 			#path = os.path.join(toolbox_folder_path, current_file_name + "_ed.txt")
 			return path
 		current_file_name = ""
@@ -997,7 +850,7 @@ class ToolboxProject:
 		
 		current_record = {}
 		for entry in words:
-			if not in_one_file:
+			if not self.Is.in_one_file:
 				if current_file_name == "":
 					current_file_name = entry["fName"]
 				elif entry["fName"] != current_file_name and not current_file_name=="":
@@ -1008,7 +861,7 @@ class ToolboxProject:
 					current_file_content = "\\_sh v3.0  621  Text\n"
 			else:
 				if current_file_name == "":
-					current_file_name = os.path.basename(toolbox_folder_path)
+					current_file_name = os.path.basename(self.toolbox_folder_path)
 			
 			marker = root_marker
 			while "mkrFollowingThis" in markers[marker]: #iteriert durch die Spalten id und ref, solange bis die Annotation erreicht ist
@@ -1048,19 +901,12 @@ class ToolboxProject:
 				return re.sub("[\r\n]+?( +)?", "", f.read())
 		
 		def intify(str):
-			return int(re.search("\d+", str).group(0))
-		def return_line_nr(nr):
-			if intify(nr) < 10:
-				return "0"+str(nr)
-			else:
-				return str(nr)
-		def return_page_nr(nr):
-			if intify(nr) < 10:
-				return "00"+str(nr)
-			elif intify(nr) < 100:
-				return "0"+str(nr)
-			else:
-				return str(nr)
+			return str.swapcase()
+			
+		def return_line_nr(nr, length):
+			while len(str(nr)) < length:
+				nr = "0"+str(nr)
+			return nr
 				
 		def split_next_line(soup):
 			splitted = soup.text.split(" ", 1)
@@ -1074,12 +920,15 @@ class ToolboxProject:
 		
 		doc_title = soup.document["title"]
 		
-		
 		reference, text = "", ""
 		for page in soup.document.find_all("lpp"):
+			page_nr = return_line_nr(intify(page["nr"]), 3) # "56a"
+			
 			for line in page.find_all("z"):
 				if line["nr"] in ["re", "title"]:
 					continue
+				
+				line_nr = line["nr"]
 					
 				if reference and text:
 					if text[-1] in ["⸗", "-", "_"]:
@@ -1090,6 +939,206 @@ class ToolboxProject:
 					self.raw_xml[reference] = text
 				
 				text = line.text
-				reference = "{title}_{page}.{line}".format(title=doc_title, page=return_page_nr(page["nr"]), line=return_line_nr(line["nr"]))
+				reference = "{title}_{page}.{line}".format(title=doc_title, page=return_line_nr(page_nr, 3), line=return_line_nr(line_nr, 2))
 				
+	def reload_original(self, decoded_table):
+		logging = False
+		log_txt = ""
 		
+		if len(set([ddict["ref"] for ddict in decoded_table])) > 1:
+			input(decoded_table)
+			
+		if len(decoded_table) == 1 and not "std" in decoded_table[0]:
+			decoded_table = [dict(copy(decoded_table[0]), **{"tx" : decoded_table[0]["tx"].split(" ")[ii]}) for ii in range(len(decoded_table[0]["tx"].split(" ")))]
+		
+		ii = 0
+		uu = 0
+		
+		ref_marker = decoded_table[0]["ref"]
+		if ref_marker in self.raw_xml:
+			xml_tx = self.raw_xml[ref_marker]
+			xml_lst = xml_tx.split(" ")
+		else:
+			return decoded_table
+		
+		if logging:
+			log_txt = ref_marker + "\n" + " ".join([ddict["tx"] for ddict in decoded_table]).strip() + "\n" + xml_tx + "\n\n"
+		
+		def old():
+			while ii < len(decoded_table):
+				toolbox_tx = decoded_table[ii]["tx"]
+				toolbox_tx = re.sub(" +", " ", toolbox_tx)
+				
+				
+				tx2 = xml_lst[uu]
+				while tx2 in ["„", "‚", "“", "‘"]:
+					uu += 1
+					tx2 = xml_lst[uu]
+					
+				tx1 = re.sub(' ', ' ', toolbox_tx)
+				if tx1[-1] == "\n":
+					tx2 += "\n"
+				
+				tx2_joints = tx2.count("⸗") + tx2.count("-") + tx2.count("=")
+				tx1_breaks = tx1.count(" ")
+				
+				print(ii, tx1, tx1 == tx2, tx2)
+				if not tx1 == tx2:
+					if ii+1 == len(decoded_table): #
+						tx2 = " ".join(xml_lst[uu:])
+						if tx1[-1] == "\n":
+							tx2 += "\n"
+							
+						if decoded_table[ii]["tx"] == tx2: #es fehlen lediglich Annotationen, der Rest ist identisch
+							uu += tx2.count(" ") 
+							break
+						elif uu+tx1_breaks+1 < len(xml_lst) and decoded_table[ii]["tx"] == xml_lst[uu+tx1_breaks+1] + "\n": #und nicht auf der nächsten Zeile noch ein anderes Wort dazwischen gerutscht ist (passiert bei Zeilen mit Zwei wörtern, wenn darüber ein Zeilenumbruch eingefügt wird),
+							print(ref_marker, "initial surplus word. Possible line break?")
+							uu += 1
+							continue
+							
+						#das Wort oder die Phrase ist äquivalent zu allem, was folgt. Dadurch ist ein index-overflow im Folgenden ausgeschlossen
+							
+					elif tx1[0] == "@": #Spannenannotationen werden übersprüngen und ggf. rückwirkend korrigiert
+						ii += 1
+						continue
+						
+					elif tx1 == " ".join(xml_lst[uu:uu+tx1_breaks+1]): #in diesem Fall stimmen beide Teile überein, sobald man die Leerzeichen berücksichtigt. Das ist der Fall, wenn Nobreak-Spaces oder Leerzeichen im Text vorhanden sind. Letzeteres kann bei unvollständigen Annotationen auftreten
+						tx2 = " ".join(xml_lst[uu:uu+tx1_breaks+1])
+						if tx1[-1] == "\n":
+							tx2 += "\n"
+							
+						uu += tx1_breaks + 1
+						ii += 1
+						continue
+						
+					elif decoded_table[ii+1]["tx"] == xml_lst[uu+1]: #wenn das nächste Wort übereinstimmt, liegt hier Äquivalenz vor und es kann ausgetauscht werden
+						tx2 = xml_lst[uu]
+						
+					elif decoded_table[ii+2]["tx"] == xml_lst[uu+tx1_breaks+1]: #das übernächste Wort stimmt überein
+						if not tx1_breaks: # wenn keine Leerzeichen oder Nbksp vorhanden sind, die auf eine Zusammenrückung in der Korrektur hinweisen, wurde wahrscheinlich ein Wort gelöscht
+							print("deleted '" + decoded_table[ii]["tx"] + "' at index", ii, "in", ref_marker)
+							decoded_table = decoded_table[:ii] + decoded_table[ii+1:]
+							
+							continue
+							
+						else:
+							print(ref_marker)
+							print(" ".join([ddict["tx"] for ddict in decoded_table]))
+							print(xml_tx)
+							print(ii, uu, tx1_breaks)
+							print("breaks")
+							input()
+							
+					elif decoded_table[ii]["tx"] == xml_lst[uu+tx1_breaks+1]: #Das Wort wurde in der XML-Datei gelöscht
+						if not tx1_breaks: # wenn keine Leerzeichen oder Nbksp vorhanden sind, die auf eine Zusammenrückung in der Korrektur hinweisen, wurde wahrscheinlich ein Wort gelöscht
+							if ii == 0: #am Anfang der Zeile deuten Löschungen auf Zeilenumbrüche hin
+								print(ref_marker, "initial surplus word. Possible line break?")
+							
+							else:
+								print(ref_marker)
+								print(" ".join([ddict["tx"] for ddict in decoded_table]))
+								print(xml_tx)
+								print(ii, uu, tx1_breaks)
+								print("deleted in-place")
+							
+							input()
+							
+							uu += 1
+							continue
+							
+						else:
+							print(ref_marker)
+							print(" ".join([ddict["tx"] for ddict in decoded_table]))
+							print(xml_tx)
+							print(ii, uu, tx1_breaks)
+							print("breaks in-place")
+							input()
+						
+						
+					else:
+						print(ref_marker)
+						print(" ".join([ddict["tx"] for ddict in decoded_table]).strip())
+						print(xml_tx)
+						
+						print("Please check the source file and try again")
+						
+						input()
+						break
+						
+						
+					if ("|" not in tx2) and ("|" in tx1):
+						print(ref_marker, "please add a linebreak to the xml")
+						return
+					
+					existing_annotations = [entry for entry in self.db_words[markers[marker]["jumps"][0]["dbtyp"]] if entry[marker].strip("\n").replace(' ', ' ') == toolbox_tx.strip("\n")]
+					if existing_annotations: 
+						if not [entry for entry in self.db_words[markers[marker]["jumps"][0]["dbtyp"]] if entry[marker].strip("\n").replace(' ', ' ') == tx1.strip("\n")]:
+							for ann in existing_annotations:
+								new_ann = dict(copy(ann), **{marker : tx1.replace(' ', ' ').strip("\n") + "\n"})
+								self.db_words[markers[marker]["jumps"][0]["dbtyp"]].append(new_ann)
+								print("new", new_ann)
+					
+					yy = 1 #Behandlung von Spannen
+					while yy < ii and "@" + decoded_table[ii]["tx"] == decoded_table[ii-yy]["tx"]:
+						decoded_table[ii-yy]["tx"] = "@" + tx2
+						
+						print("@@@")
+						input(" ".join([ddict["tx"] for ddict in decoded_table]))
+					
+					if not ("|" in tx2 or len(decoded_table) == 1):
+						print(ref_marker, decoded_table[ii]["tx"], "→", tx2)
+					decoded_table[ii]["tx"] = tx2
+					
+				
+				uu += 1
+				ii += 1
+		def new(decoded_table, log_txt):
+			txt_index=0
+			for xml_index in range(len(xml_lst)):
+				xml_word = xml_lst[xml_index]
+				
+				if txt_index < len(decoded_table):
+					txt_word = decoded_table[txt_index]["tx"].strip()
+					
+					if txt_word:
+						while txt_word[0] == "@": #Spannenannotationen werden übersprungen
+							txt_index += 1
+							txt_word = decoded_table[txt_index]["tx"].strip()
+				else:
+					txt_word = decoded_table[-1]["tx"].strip()
+					
+				if logging:
+					log_txt += xml_word + " " + txt_word + "\n"
+				
+				#print(txt_word, "#", xml_word)
+				
+				if txt_word != xml_word:
+					if self.Is.reload_only.search(xml_word):
+						new_word = {key : decoded_table[0][key] for key in ["fName", "id", "ref"]}
+						new_word["tx"] = xml_word
+						
+						if any([" " in element["tx"] for element in decoded_table]):
+							print("please check", ref_marker)
+							
+						decoded_table = decoded_table[:txt_index] + [new_word] + decoded_table[txt_index:]
+						txt_index += 1
+						
+						if txt_index == len(decoded_table):
+							decoded_table[-2]["tx"] = decoded_table[-2]["tx"].strip("\n")
+							decoded_table[-1]["tx"] += "\n"
+						
+				
+				else:
+					txt_index += 1
+				
+			if logging and any(self.Is.reload_only.search(word) for word in xml_lst):
+				log_txt += "→ " + " ".join([ddict["tx"] for ddict in decoded_table]).strip() + "\n"
+				input(log_txt)
+
+			return decoded_table
+			
+		if self.Is.reload_only:
+			return new(decoded_table, log_txt)
+		
+		return decoded_table
