@@ -2,13 +2,11 @@
 
 This project provides tools to read and write files in the [Toolbox](https://software.sil.org/toolbox/) format. 
 
-Work in progress
-
 # Usage
 
 ## input data
 
-This script operates on Toolbox projects which are built around the file 'Toolbox.prj'. They consist of a folder with an arbitrary structure that contains all files relevant to the project. A blank project can be downloaded from the [documentation website](http://www.fieldlinguiststoolbox.org).
+This script operates on Toolbox projects which are built around the file `Toolbox.prj`. They consist of a folder with an arbitrary structure that contains all files relevant to the project. A blank project can be downloaded from the [documentation website](http://www.fieldlinguiststoolbox.org).
 
 ## output data
 
@@ -31,10 +29,21 @@ The script can be imported and used with the following code:
 
 | argument | description |
 | -------- | ----------- |
-| '-r' | This argument has to be passed, if you want to reload the data from your Toolbox project. You can add '["-r"]' to the start of the array that is passed when calling 'ToolboxTools.ToolboxProject()'. If this argument is not passed, the script will reuse the data from the last import that has been stored in your working directory under the name '(YOUR_PROJECT_NAME)_annotation.csv'. |
+| `-r` | This argument has to be passed, if you want to reload the data from your Toolbox project. You can add `["-r"]` to the start of the array that is passed when calling `ToolboxTools.ToolboxProject()`. If this argument is not passed, the script will reuse the data from the last import that has been stored in your working directory under the name `YOUR_PROJECT_NAME_annotation.csv`. |
+| `--db` | This argument has to be passed in order to load the databases that are used by Toolbox to store the possible annotations. If `-c` is passed, this argument is not necessary. |
+| `-p` | The “print” argument will lead to your Toolbox files being reexported into a subdirectory in your working directory with the same name as your Toolbox folder. Independently of the reexport, a csv file with your annotation will always be generated in your working directory. |
+| `--as-one` | If this argument is passed, the reexported Toolbox files will be combined in a single file with the same name as your Toolbox folder. |
+| `-f` `FILTER` | In order to filter the range of data that is loaded into the Toolbox project you can use a file called `filter.csv` in your Toolbox folder. The filter is based on your ref-marker. For this to work your ref-marker should follow the structure `CORPUSNAME_PART_PAGE.LINE` where `PART` can be an arabic or roman numeral (capital letters). In your `filter.csv`, add a line with the structure `CORPUSNAME_PART_;PAGE.LINE_MIN;PAGE.LINE_MAX;FILTER_ID` (Compare the function `is_in_subpart_`). Then pass the filter IDs that you want to include joined by a comma to the `-f` argument. The filter will affect the contents of all files exported. |
+| `-c` | The “check” argument will lead the Script to evaluate the annotation of your Toolbox corpus based on the databases that are used to store all possible annotations by Toolbox. Not up-to-date Annotations will be corrected on the spot if there is not more than one possible annotations. All changes and inconsistencies are logged in a file called `YOUR_PROJECT_NAME_log.csv`. | 
+| `--reload=` `PATH` | This argument can be used to reload the text data of your Toolbox project from an xml-file that contains the full text. This functionality is currently under construction. |
+| `--reload-only=` `REGEX` | If this argument is passed, only tokens that match the regex will be loaded into the Toolbox project from the xml-file. |
+| `-e` `FILENAME` | The “excel” argument can be used to export the content of the `(YOUR_PROJECT_NAME)_annotation.csv` into an xlsx-file. It is not functional on it's own, because the exact definition of the function is dependent on your particular project. |
+| `-z` | This argument is specific to the project [B02](https://sfb1412.hu-berlin.de/projects/b02/) of the SFB 1412. |
 
-The last argument should be the path to the Toolbox folder. Alternatively to submitting the path via the command line you can use a keyword that is defined in 'config.txt'. To define a keyword, simply add a line that consists of the keyword (or multiple comma-separated keywords) and a path, both separated from each other by a single space. If no path is given, the script will not execute.
+The last argument should be the path to the Toolbox folder. Alternatively to submitting the path via the command line you can use a keyword that is defined in `config.txt`. To define a keyword, simply add a line that consists of the keyword (or multiple comma-separated keywords) and a path, both separated from each other by a single space. If no path is given, the script will not execute.
 
 # Funding 
 
 Funded by the Deutsche Forschungsgemeinschaft (DFG, German Research Foundation) – [SFB 1412](https://sfb1412.hu-berlin.de/), 416591334.
+
+This software was used to modify the data for  the _grammatically annotated corpus of the pericopes of the Old Lithuanian Postil of Jonas Bretkūnas_ (DOI: [10.5281/zenodo.7890990](https://doi.org/10.5281/zenodo.7890990)) and the _Grammatically Annotated Corpus of the Old Latvian Postil of Georg Mancelius_ (DOI: [10.5281/zenodo.7890894](https://doi.org/10.5281/zenodo.7890894)).

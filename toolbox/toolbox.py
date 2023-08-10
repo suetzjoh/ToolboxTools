@@ -2,7 +2,7 @@ import sys, os
 import regex as re
 import getopt
 import csv, json
-import pandas, openpyxl
+import pandas
 import itertools
 from bs4 import BeautifulSoup
 from copy import copy, deepcopy
@@ -288,7 +288,7 @@ class ToolboxProject:
 		return post_quem, ante_quem
 	def is_in_subpart_(self, pfx_str, args):
 		post_quem, ante_quem = args
-		nr_re = re.compile("(.+?_[I\d]+_)(\d+)\.([\d\S]+)")
+		nr_re = re.compile("(.+?_[IVX\d]+_)(\d+)\.([\d\S]+)")
 		def get_(pfx_str, index):
 			return nr_re.search(pfx_str).group(index)
 		def get_int(pfx_str, index):
