@@ -26,12 +26,30 @@ class ToolboxProject:
 		self.db_files = []
 		self.text_files = []
 		
+		self.filter_path = ""
+		self.excel_export_path = ""
+		
+		
 		self._init_args(argv)
 		self._debug_state()
 		
 		self.load_data()
+		
+		if self.Is.load_db:
+			self.load_dictionary()
+		
 		if self.Is.do_read:
 			self.read_toolbox_project()
+	
+	def set_export_path(self, path):
+		self.export_folder_path = path
+		log_fName = os.path.basename(self.toolbox_folder_path) + "_log.csv"
+		out_fName = os.path.basename(self.toolbox_folder_path) + "_annotation.csv"
+		
+		self.log_path = os.path.join(path, log_fName)
+		self.out_path = os.path.join(path, out_fName)
+	def set_excel_path(self, path):
+		self.excel_export_path = os.path.join(path, self.excel_fName)
 	
 	def _init_args(self, argv):
 		opts, args = getopt.getopt(argv, "ce:f:prz", ["as-one", "reload=", "reload-only=", "ignore-numbers", "db"]) #c: check, e: excel, f: filter, p: print,
@@ -54,12 +72,11 @@ class ToolboxProject:
 				self.toolbox_folder_path = arg
 				
 			else:
+				print(arg)
 				print("Kein Pfad vorgegeben.")
 				quit()
-				
-		self.folder_path = os.path.basename(self.toolbox_folder_path)
-		self.log_path = os.path.basename(self.toolbox_folder_path) + "_log.csv"
-		self.out_path = os.path.basename(self.toolbox_folder_path) + "_annotation.csv"
+		
+		self.set_export_path(self.toolbox_folder_path + "-log")
 		
 		self.Is.do_read = any([opt == "-r" for opt,arg in opts])
 				
@@ -67,13 +84,10 @@ class ToolboxProject:
 		self.Is.in_one_file = any([opt == "--as-one" for opt,arg in opts]) if self.Is.reexport else False
 		self.Is.ignore_numbers = any([opt == "--ignore-numbers" for opt,arg in opts])
 		
-		if self.Is.reexport:
-			if not os.path.exists(self.folder_path):
-				os.mkdir(self.folder_path)
-		
 		for opt,arg in opts:
 			if opt == "-e":
-				self.Is.excel_export = os.path.join(self.folder_path, arg)
+				self.Is.excel_export = True
+				self.excel_fName = arg #der absolute Pfad, in dem die Datei abgespeichert werden soll, muss über den manuellen Aufruf von set_excel_path(<Pfad>) festgelegt werden.
 			
 			if opt == "--reload": 
 				read_path = arg
@@ -94,14 +108,9 @@ class ToolboxProject:
 			
 		self.Is.do_zitate = any([opt == "-z" for opt,arg in opts]) and self.Is.excel_export
 	
-
-		self.filter_path = os.path.join(self.toolbox_folder_path, "filter.csv") if os.path.isfile(os.path.join(self.toolbox_folder_path, "filter.csv")) else None
-		if self.filter_path:
-			self.Is.do_filter = [arg.strip("\"") for opt,arg in opts if opt == "-f"]
+		self.Is.do_filter = [spl for opt,arg in opts if opt == "-f" for spl in arg.strip("\"").split(",")]
 			
-			if self.Is.do_filter:
-				self.filters = [[line.split(";")[0]+line.split(";")[1], line.split(";")[0]+line.split(";")[2], line.split(";")[3].strip()] for line in open(self.filter_path, "r", encoding="utf-8").readlines() if re.match("(.+?_[I\d]+_);(\d+)\.([\d\S]+);(\d+)\.([\d\S]+);\S", line)]
-				
+	
 	def _debug_state(self):
 		if not self.Is.do_read:
 			print(self.toolbox_folder_path + "\n")
@@ -137,15 +146,23 @@ class ToolboxProject:
 			
 			
 		print("")
-		
+	
 	def load_data(self):
 		#Generation der Listen mit den Dateien
 		toolbox_folder = list(os.walk(self.toolbox_folder_path))
 			
-		other_files = [os.path.join(path, file) for path, dirs, files in toolbox_folder for file in files if file[-3:] == "txt" and file != "ReadmeAfter.txt" and not file[-8:] == "konk.txt" or "." not in file] #Datenbanken können im Prinzip als jede Datei gespeichert werden, naheliegend sind .txt und engungslose Dateien. Das Readme und die generierten Konkordanzen (die sollten vlt. gelöscht werden) müssen ausgenommen werden
-
+		csv_files = [os.path.join(path, file) for path, dirs, files in toolbox_folder for file in files if os.path.splitext(file)[1] == ".csv"]
+		
+		#filter path
+		filter_files = [file for file in csv_files if os.path.basename(file) == "filter.csv"]
+		if len(filter_files) == 1:
+			self.filter_path = filter_files[0]
+			
+		if self.filter_path:
+			self.filters = [[line.split(";")[0]+line.split(";")[1], line.split(";")[0]+line.split(";")[2], line.split(";")[3].strip()] for line in open(self.filter_path, "r", encoding="utf-8").readlines() if re.match("(.+?(?:_[IVX\d]+_)?);(\d+[a-z]?)\.(\d+[a-z]?);(\d+[a-z]?)\.(\d+[a-z]?);\S", line)]
+			
 		#hier wird eine Liste mit den Datenbanktypen generiert. Die Typen werden gebraucht, um die Datenbanken einlesen zu können.
-		typ_files = {file[:-4] : os.path.join(path, file) for path, dirs, files in toolbox_folder for file in files if file[-3:] == "typ"}
+		typ_files = {os.path.splitext(file)[0] : os.path.join(path, file) for path, dirs, files in toolbox_folder for file in files if os.path.splitext(file)[1] == ".typ"} #Name und Dateiname sollte gleich sein
 		
 		for typ in typ_files:
 			file_text = open(typ_files[typ], "r", encoding="UTF-8").read().replace("\\", "\\\\")
@@ -186,42 +203,44 @@ class ToolboxProject:
 				
 			
 			self.types[type_name] = [{"mkrRecord" : mkr_record, "GlossSeparator" : gloss_seperator, "markers" : [markers]}]
-	
+		
+		txt_files = [os.path.join(path, file) for path, dirs, files in toolbox_folder for file in files if os.path.splitext(file)[1] == ".txt" and file != "ReadmeAfter.txt" and not file[-8:] == "konk.txt" or "." not in file] #Datenbanken können im Prinzip als jede Datei gespeichert werden, naheliegend sind .txt und engungslose Dateien. Das Readme und die generierten Konkordanzen (die sollten vlt. gelöscht werden) müssen ausgenommen werden
+		
 		#das sind dann die Dateien, aus denen tatsächlich Informationen extrahiert werden	
-		self.databases = [[file, open(file, "r", encoding="UTF-8").readline().split(" ", 4)[4].strip()] for file in other_files]
+		self.databases = [[file, open(file, "r", encoding="UTF-8").readline().split(" ", 4)[4].strip()] for file in txt_files]
 			#Bsp.: "\_sh v3.0  621  Text". Wichtig: doppelte Leerzeichen
 		self.db_files = [tuple for tuple in self.databases if tuple[1] != "Text"]
 		self.text_files = [tuple for tuple in self.databases if tuple[1] == "Text"]
-
-		#hier werden die Wörterbücher geladen
+	
+	def load_dictionary(self):	
+		for db_file in self.db_files:
+			file_path, typ = db_file[0], db_file[1]
+			
+			with open(file_path, "r", encoding="UTF-8") as file:
+				file_text = file.read()
+				
+			if not file_text[-1] == "\n":
+				file_text += "\n"
+			
+			if not typ in self.types:
+				continue
+				
+			root_marker = self.types[typ][0]["mkrRecord"]
+			markers = self.types[typ][0]["markers"][0]
+			
+			map = self.decode_toolbox_map(file_text, markers, root_marker)
+			if map:
+				df = pandas.DataFrame.from_records(map)
+				dpl = df[df.duplicated(keep='first')]
+				if not dpl.empty:
+					print(typ, "has duplicates:") 
+					print(dpl.to_string())
+				
+					input("press enter to continue")
+				
+			self.db_words[typ] = map
+				
 		
-		if self.Is.load_db:
-			for db_file in self.db_files:
-				file_path, typ = db_file[0], db_file[1]
-				
-				with open(file_path, "r", encoding="UTF-8") as file:
-					file_text = file.read()
-					
-				if not file_text[-1] == "\n":
-					file_text += "\n"
-				
-				if not typ in self.types:
-					continue
-					
-				root_marker = self.types[typ][0]["mkrRecord"]
-				markers = self.types[typ][0]["markers"][0]
-				
-				map = self.decode_toolbox_map(file_text, markers, root_marker)
-				if map:
-					df = pandas.DataFrame.from_records(map)
-					dpl = df[df.duplicated(keep='first')]
-					if not dpl.empty:
-						print(typ, "has duplicates:") 
-						print(dpl.to_string())
-					
-						input("press enter to continue")
-					
-				self.db_words[typ] = map
 	def read_toolbox_project(self):
 		print("Lese Dateien:")
 		for text_file in self.text_files: 
@@ -249,9 +268,13 @@ class ToolboxProject:
 			filename = os.path.basename(file_path)
 			filename = filename[:-4] if ".txt" in filename else filename
 			self.decode_toolbox_json(map, markers, root_marker, {"fName" : filename})
-		
+	
+	def write_toolbox_project(self):
 		if self.words:
 			if self.Is.reexport:	
+				if not os.path.exists(self.export_folder_path):
+					os.mkdir(self.export_folder_path)
+				
 				self.list_to_toolbox(self.words, markers, root_marker)
 				
 			print("saving", self.out_path)
@@ -270,7 +293,8 @@ class ToolboxProject:
 			else:
 				print("no log\n")		
 		else:
-			print("Die gelesenen Daten sind leer. Wurde vlt. ein falscher Filter ausgewählt? Es wurden keine Änderungen an vorher durchgeführten Exporten vorgenommen.\n")
+			input("Die gelesenen Daten sind leer. Wurde vlt. ein falscher Filter ausgewählt? Es wurden keine Änderungen an vorher durchgeführten Exporten vorgenommen. [Enter]\n")
+		
 	
 	#Hilfsfunktionen
 	def split_toolbox_reference(self, stelle):
@@ -288,7 +312,7 @@ class ToolboxProject:
 		return post_quem, ante_quem
 	def is_in_subpart_(self, pfx_str, args):
 		post_quem, ante_quem = args
-		nr_re = re.compile("(.+?_[IVX\d]+_)(\d+)\.([\d\S]+)")
+		nr_re = re.compile("(.+?_(?:[IVX\d]+_)?)(\d+[a-z])\.([\d\S]+)")
 		def get_(pfx_str, index):
 			return nr_re.search(pfx_str).group(index)
 		def get_int(pfx_str, index):
@@ -296,7 +320,7 @@ class ToolboxProject:
 			while len(re.match("\d+",result).group(0)) < 3:
 				result = "0" + result
 			return result.swapcase() #weil Majuskeln im Unicodeblock vor Minuskeln kommen
-			
+		
 		if not nr_re.search(pfx_str):
 			return False
 		
@@ -320,6 +344,22 @@ class ToolboxProject:
 				continue
 		
 		return False
+		
+	def print_filters(self):
+		filters = self.filters
+		
+		df = pandas.DataFrame.from_records(filters, columns=["beginning", "end", "label"])
+		df = df[df["label"].isin(self.Is.do_filter)]
+		df["stelle"] = df["beginning"] + "–" + df["end"]
+		df.drop(["beginning", "end"], axis=1, inplace=True)
+		df.sort_values(["label", "stelle"], inplace=True)
+		
+		df = df.pivot_table(index=["label"], aggfunc=lambda x: ", ".join(x), fill_value="")
+		
+		label_path = os.path.join(self.export_folder_path, os.path.basename(self.toolbox_folder_path) + "_labels.csv")
+		df.to_csv(label_path, sep='\t', encoding="UTF-8-SIG", index=True, header=True)
+		
+		print("printed filters to", label_path)
 		
 	#wird verwendet, um alle Datenbanken, ob Text- oder Wörterbuch, aus dem Toolbox-Format einzulesen. Gibt eine List of Dictionaries zurück, wobei jedes Listenelement die Daten eines ref-Markers umfasst und das Dictionary die Zeilen der Annotationswerte
 	def decode_toolbox_map(self, string, markers, marker):
@@ -612,7 +652,7 @@ class ToolboxProject:
 				
 				if self.Is.do_filter:
 					if "ref" in prefix.keys():
-						#print(prefix["ref"] + " " + str(self.filter_ref(prefix["ref"])))
+						#print(prefix["ref"] + " " + str(self.filter_ref(prefix["ref"], self.Is.do_filter)))
 						sub_part = self.filter_ref(prefix["ref"], self.Is.do_filter)
 						if not sub_part:
 							continue
