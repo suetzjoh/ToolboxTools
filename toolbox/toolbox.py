@@ -10,7 +10,7 @@ from copy import copy, deepcopy
 class ToolboxProject:
 	#globals
 	class Is:
-		do_read = reexport = in_one_file = load_db = do_check = do_filter = do_reload = reload_only = ignore_numbers = excel_export = do_zitate = False
+		do_read = reexport = in_one_file = load_db = do_check = do_filter = strict = do_reload = reload_only = ignore_numbers = excel_export = do_zitate = False
 	
 	#Hauptfunktionen
 	def __init__(self, argv):
@@ -28,6 +28,7 @@ class ToolboxProject:
 		
 		self.filter_path = ""
 		self.excel_export_path = ""
+		self.excel_fName = ""
 		
 		
 		self._init_args(argv)
@@ -43,16 +44,18 @@ class ToolboxProject:
 	
 	def set_export_path(self, path):
 		self.export_folder_path = path
+		
 		log_fName = os.path.basename(self.toolbox_folder_path) + "_log.csv"
 		out_fName = os.path.basename(self.toolbox_folder_path) + "_annotation.csv"
 		
 		self.log_path = os.path.join(path, log_fName)
 		self.out_path = os.path.join(path, out_fName)
+			
 	def set_excel_path(self, path):
 		self.excel_export_path = os.path.join(path, self.excel_fName)
 	
 	def _init_args(self, argv):
-		opts, args = getopt.getopt(argv, "ce:f:prz", ["as-one", "reload=", "reload-only=", "ignore-numbers", "db"]) #c: check, e: excel, f: filter, p: print,
+		opts, args = getopt.getopt(argv, "ce:f:prz", ["as-one", "reload=", "reload-only=", "ignore-numbers", "db", "strict"]) #c: check, e: excel, f: filter, p: print,
 		
 		config_text = open(os.path.join(os.path.dirname(__file__), "config.txt"), "r", encoding="utf-8").readlines()
 		config_paths = {}
@@ -77,12 +80,15 @@ class ToolboxProject:
 				quit()
 		
 		self.set_export_path(self.toolbox_folder_path + "-log")
+		self.set_excel_path(self.toolbox_folder_path + "-log")
 		
 		self.Is.do_read = any([opt == "-r" for opt,arg in opts])
 				
 		self.Is.reexport = any([opt == "-p" for opt,arg in opts])
 		self.Is.in_one_file = any([opt == "--as-one" for opt,arg in opts]) if self.Is.reexport else False
 		self.Is.ignore_numbers = any([opt == "--ignore-numbers" for opt,arg in opts])
+		
+		self.Is.do_check = any([opt == "-c" for opt,arg in opts])
 		
 		for opt,arg in opts:
 			if opt == "-e":
@@ -103,13 +109,15 @@ class ToolboxProject:
 			if opt == "--reload-only":
 				self.Is.reload_only = re.compile(arg)
 		
-		self.Is.do_check = any([opt == "-c" for opt,arg in opts])
+			if opt == "--strict":
+				self.Is.do_check = True
+				self.Is.strict = True
+		
 		self.Is.load_db = any([opt == "--db" for opt,arg in opts]) or self.Is.do_check
 			
 		self.Is.do_zitate = any([opt == "-z" for opt,arg in opts]) and self.Is.excel_export
 	
 		self.Is.do_filter = [spl for opt,arg in opts if opt == "-f" for spl in arg.strip("\"").split(",")]
-			
 	
 	def _debug_state(self):
 		if not self.Is.do_read:
@@ -142,8 +150,6 @@ class ToolboxProject:
 			if self.Is.do_filter:
 				print("Daten werden nach folgenden Filtern gefiltert:", *self.Is.do_filter)
 				print("Achtung, durch die Einschränkung der gelesenen Daten wird werden alle Exporte gefiltert!")
-			
-			
 			
 		print("")
 	
@@ -271,10 +277,10 @@ class ToolboxProject:
 	
 	def write_toolbox_project(self):
 		if self.words:
-			if self.Is.reexport:	
-				if not os.path.exists(self.export_folder_path):
-					os.mkdir(self.export_folder_path)
+			if not os.path.exists(self.export_folder_path):
+				os.mkdir(self.export_folder_path)
 				
+			if self.Is.reexport:	
 				self.list_to_toolbox(self.words, markers, root_marker)
 				
 			print("saving", self.out_path)
@@ -286,7 +292,8 @@ class ToolboxProject:
 			if self.log:
 				df = pandas.DataFrame.from_records(self.log)
 				df = df.replace(r'\n','', regex=True)
-
+				
+				
 				print("\nlength of log:")
 				print(df["fName"].value_counts())
 				df.to_csv(self.log_path, sep=';', encoding="UTF-8-SIG", index=False, header=True)
@@ -312,7 +319,7 @@ class ToolboxProject:
 		return post_quem, ante_quem
 	def is_in_subpart_(self, pfx_str, args):
 		post_quem, ante_quem = args
-		nr_re = re.compile("(.+?_(?:[IVX\d]+_)?)(\d+[a-z])\.([\d\S]+)")
+		nr_re = re.compile("(.+?_(?:[IVX\d]+_)?)(\d+[a-z]?)\.([\d\S]+)")
 		def get_(pfx_str, index):
 			return nr_re.search(pfx_str).group(index)
 		def get_int(pfx_str, index):
@@ -668,8 +675,8 @@ class ToolboxProject:
 					
 				for dictt in decoded_table:
 					#wenn die Wörter hier korrigiert werden, wird die Laufzeit um mehrere Stunden verkürzt
-					self.words.extend(self.check_word_for_consistency(dictt, markers, marker))
-		
+					self.words.extend([word for word in self.check_word_for_consistency(dictt, markers, marker) if not word == [None]])
+					
 	#gibt bei self.Is.do_check und geladenen Wörterbüchern das korrigierte Wort zurück. Wenn die Annotationen eindeutig sind, werden sie automatisch aufgefüllt, wenn nicht, bleiben sie unangetastet. Für den Fall, dass Annotationen vollkommen fehlen, können diese automatisch aufgefüllt werden, deswegen gibt die Funktion immer eine Liste von Werten zurück, die mit extend() angefügt wird.
 	spannenindex = {}		
 	def check_word_for_consistency(self, word, markers, marker):
@@ -732,10 +739,14 @@ class ToolboxProject:
 					if not jumpTo in word: 
 						word.update({jumpTo : from_database})
 						self.log.append({**{"fixed" : jumpTo}, **word})
+						if self.Is.strict:
+							return [None]
 					#Es gibt eine Annotation, die allerdings nicht mit der Datenbank übereinstimmt
 					elif not any(strip_plus(word[jumpTo]) in dba for dba in database_annotations_):
 						word[jumpTo] = from_database
 						self.log.append({**{"fixed" : jumpTo}, **word})
+						if self.Is.strict:
+							return [None]
 					else:
 						#wenn alles stimmt, müssen nur Zeilenumbrüche vermieden werden
 						if word[jumpTo] and word[jumpTo][-1] == "\n":
@@ -746,6 +757,8 @@ class ToolboxProject:
 					#Die Annotation fehlt
 					if not jumpTo in word:
 						self.log.append({**{"tofix" : jumpTo + ": " + str(database_annotations)}, **word})
+						if self.Is.strict:
+							return [None]
 						return word
 					#Die Annotation ist vorhanden, nichts muss getan werden
 					elif [strip_plus(word[jumpTo])] in database_annotations_:
@@ -754,7 +767,9 @@ class ToolboxProject:
 					#Die hinterlegte Annotation ist kein Substring eines Eintrags in der Datenbank
 					elif not any([strip_plus(word[jumpTo]) in dbw for dba in database_annotations_ for dbw in dba]):
 						self.log.append({**{"tofix" : jumpTo}, **word})
-					
+						if self.Is.strict:
+							return [None]
+
 					#Die hinterlegte Annotation ist Substring eines Eintrags in der Datenbank
 					else:
 						database_annotations_ = [[dbw] for dba in database_annotations for dbw in dba if strip_plus(word[jumpTo]) in dbw]
@@ -771,7 +786,8 @@ class ToolboxProject:
 							
 							word[jumpTo] = from_database
 							self.log.append({**{"fixed" : jumpTo}, **word})
-						
+							if self.Is.strict:
+								return [None]
 				
 				if len(word[marker]):
 					if word[marker][0] == '@':

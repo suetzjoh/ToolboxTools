@@ -6,4 +6,6 @@ toch D:/Hannes/Dateien/Uni/Tocharisch/TochToolbox
 apers D:/Hannes/Dateien/Uni/Indoiranisch/Iranisch/ApersToolbox
 avest D:/Hannes/Dateien/Uni/Indoiranisch/Iranisch/AvestToolbox
 preus,preuß D:/Hannes/Dateien/Uni/Baltoslavisch/Baltisch/Altpreussisch/PreussToolbox
-veda D:/Hannes/Dateien/Uni/Indoiranisch/Altindisch/SanskritToolbox
+sans,sanskr,sanskrit,veda D:/Hannes/Dateien/Uni/Indoiranisch/Altindisch/SanskritToolbox
+heth D:/Hannes/Dateien/Uni/Hethitisch/HethToolbox
+greek,griechisch,griech D:/Hannes/Dateien/Uni/Griechisch/GreekToolbox
