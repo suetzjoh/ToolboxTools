@@ -439,20 +439,16 @@ class ToolboxProject:
 			if "mkrFollowingThis" in markers[marker]:
 				new_marker = markers[marker]["mkrFollowingThis"]
 				
-				
 				#in manchen Dateien ist als following auf den Übersetzungsmarker wieder ref eingegeben, um die Datei leicht zu erweitern. Das führt zu einem unendlichen Loop, der hier unterbrochen wird.
 				if new_marker in self.marker_stack:
 					self.marker_stack.pop()
 					return get_line(string, marker)
-					
 			else: #der letzte Marker ist die Übersetzung (gilt wenn kein Loop angelegt ist)
-				
 				self.marker_stack.pop()
 				return get_line(string, marker)
 			
 			nnn = next_line(string, new_marker)
 			ttt = get_line(string, marker)
-			
 			ttt.update(nnn)
 			
 			self.marker_stack.pop()
@@ -481,7 +477,6 @@ class ToolboxProject:
 				
 				return [[marker, bytes(map[marker], encoding="UTF-8")]] if map[marker] else None
 			
-			#print(new_marker, map)
 			next_line = decode_alignment(map, new_marker)
 			
 			if next_line:
@@ -494,15 +489,12 @@ class ToolboxProject:
 				return next_line
 			else:
 				return [[marker, bytes(map[marker], encoding="UTF-8")]] if map[marker] else None
-			#print
 		
 		def decode_words(marker, table, prefix, min=0, yy=-1): #check von min bis xx
 			current_index = get_index_of_marker(marker, table)
 			
 			if current_index is None:
 				return []
-			
-			
 			
 			current_row = table[current_index][1]
 			
@@ -523,7 +515,6 @@ class ToolboxProject:
 					#wenn das Zeichen (in einem rekursiven Aufruf der Funktion mit bestimmtem min und max) vor dem min kein Leerzeichen ist, können die Zeilen nicht aliniert sein. Deswegen gehen wir vorsichtshalber weiter (→ if following_words == None)
 					return None
 			
-			
 			spalten = []
 			if "jumps" in markers[marker]:
 				
@@ -539,7 +530,6 @@ class ToolboxProject:
 					cond1 = current_row[xx] == 32 and current_row[xx+1] != 32 if not cond2 else False
 					#das Ende von Leerzeichen bedeutet das Ende eines Wortes
 					
-					
 					if cond1 or cond2:
 						found = True
 						
@@ -553,9 +543,7 @@ class ToolboxProject:
 						for jump in markers[marker]["jumps"]:
 							next_marker = jump["mkrTo"]
 							
-							
 							following_words = decode_words(next_marker, table, prefix, xx_, xx+1) if cond1 else decode_words(next_marker, table, prefix, xx_)
-							
 							
 							if following_words == None:
 								if cond2:
@@ -613,8 +601,6 @@ class ToolboxProject:
 								
 								zeile = [zeile[0]] #für logging reasons (???)
 								spalten.append([zeile[0]])
-								
-							
 						
 							xx_ = xx+1
 				if not found:
@@ -643,7 +629,6 @@ class ToolboxProject:
 			
 		new_marker = markers[marker]["mkrFollowingThis"]
 		
-		
 		if not "jumps" in markers[marker]: 
 			#vgl. oben. mit dem Vorhandensein wird zwischen Id- und Record-Markern und zu interlinearisierenden Einträgen unterschieden. Bei den Text-Datenbanken ist das nativ von Toolbox vorgesehen
 			
@@ -668,7 +653,12 @@ class ToolboxProject:
 				if table is None:
 					continue
 				
-				decoded_table = [ddict for llist in decode_words(marker, table, prefix) for ddict in llist]
+				decoded_table = []
+				for llist in decode_words(marker, table, prefix):
+					for key in [line[0] for line in table]:
+						if not key in llist[0].keys():
+							llist[0].update({key : [line for line in table if line[0] == key][0][1].decode("UTF-8").strip()})
+					decoded_table += [ddict for ddict in llist]
 				
 				if self.Is.do_reload:
 					decoded_table = self.reload_original(decoded_table)
