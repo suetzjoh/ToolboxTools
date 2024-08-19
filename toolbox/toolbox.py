@@ -3,6 +3,7 @@ import regex as re
 import getopt
 import csv, json
 import pandas
+import numpy
 import itertools
 from bs4 import BeautifulSoup
 from copy import copy, deepcopy
@@ -27,9 +28,12 @@ class ToolboxProject:
 		self.text_files = []
 		
 		self.filter_path = ""
+		self.export_folder_path = ""
 		self.excel_export_path = ""
 		self.excel_fName = ""
 		
+		self.root_marker = ""
+		self.markers = []
 		
 		self._init_args(argv)
 		self._debug_state()
@@ -39,8 +43,10 @@ class ToolboxProject:
 		if self.Is.load_db:
 			self.load_dictionary()
 		
-		if self.Is.do_read:
-			self.read_toolbox_project()
+		self.read_toolbox_project()
+		
+		if self.Is.do_check:
+			self.check_words_for_consistency()
 	
 	def set_export_path(self, path):
 		self.export_folder_path = path
@@ -55,12 +61,12 @@ class ToolboxProject:
 		self.excel_export_path = os.path.join(path, self.excel_fName)
 	
 	def _init_args(self, argv):
-		opts, args = getopt.getopt(argv, "ce:f:prz", ["as-one", "reload=", "reload-only=", "ignore-numbers", "db", "strict"]) #c: check, e: excel, f: filter, p: print,
+		opts, args = getopt.getopt(argv, "ce:f:prz", ["as-one", "reload=", "reload-only=", "ignore-numbers", "db", "strict", "export-path="]) #c: check, e: excel, f: filter, p: print,
 		
 		config_text = open(os.path.join(os.path.dirname(__file__), "config.txt"), "r", encoding="utf-8").readlines()
 		config_paths = {}
 		for line in config_text:
-			if line[0] == "#":
+			if next(iter(line)) == "#":
 				continue
 			if " " in line:
 				key, path = line.strip().split(" ", 1)
@@ -78,6 +84,9 @@ class ToolboxProject:
 				print(arg)
 				print("Kein Pfad vorgegeben.")
 				quit()
+		if not self.toolbox_folder_path:
+			print("Kein Pfad vorgegeben.")
+			quit()
 		
 		self.set_export_path(self.toolbox_folder_path + "-log")
 		self.set_excel_path(self.toolbox_folder_path + "-log")
@@ -112,7 +121,10 @@ class ToolboxProject:
 			if opt == "--strict":
 				self.Is.do_check = True
 				self.Is.strict = True
-		
+			
+			if opt == "--export-path":
+				self.set_export_path(arg)
+				
 		self.Is.load_db = any([opt == "--db" for opt,arg in opts]) or self.Is.do_check
 			
 		self.Is.do_zitate = any([opt == "-z" for opt,arg in opts]) and self.Is.excel_export
@@ -201,8 +213,8 @@ class ToolboxProject:
 					keys[match[0]] = match[1]
 					if match[0] == "mkr":
 						key = match[1]
-					
-				if "jumps" in markers[key]:
+				
+				if "jumps" in markers[key]: #diese Zeile resultiert darin, dass die Marker über die Datenbanken hinweg dieselben sein müssen.
 					markers[key]["jumps"].append(keys)
 				else:
 					markers[key]["jumps"] = [keys]
@@ -237,16 +249,21 @@ class ToolboxProject:
 			map = self.decode_toolbox_map(file_text, markers, root_marker)
 			if map:
 				df = pandas.DataFrame.from_records(map)
-				dpl = df[df.duplicated(keep='first')]
-				if not dpl.empty:
-					print(typ, "has duplicates:") 
-					print(dpl.to_string())
+				if "mrph" in df and False: ##TODO
+					dpl = pandas.merge(df.iloc[:,-2].apply(lambda x: pandas.Series(str(x).strip().split(";"))).stack().reset_index(), df.reset_index(), left_on="level_0", right_on="index").drop(["mrph", "level_0", "level_1"], axis=1)
+					
+					dpl = dpl[dpl.duplicated(keep='first')]
+					
+					if not dpl.empty:
+						print(typ, "has duplicates:") 
+						print(dpl.to_string())
+					
+						input("press enter to continue")
+			
+				map.sort(key=lambda x: x[root_marker])
 				
-					input("press enter to continue")
+				self.db_words[typ] = map
 				
-			self.db_words[typ] = map
-				
-		
 	def read_toolbox_project(self):
 		print("Lese Dateien:")
 		for text_file in self.text_files: 
@@ -269,24 +286,42 @@ class ToolboxProject:
 			root_marker = self.types[typ][0]["mkrRecord"]
 			markers = self.types[typ][0]["markers"][0]
 			
-			map = self.decode_toolbox_map(file_text, markers, root_marker)
+			if self.root_marker:
+				if self.root_marker != root_marker:
+					self.root_marker = None
+					self.markers = None
+					print("Some texts have different data structures than others. This may lead to ambiguity when exporting the data.")
+			elif self.root_marker == "":
+				self.root_marker = root_marker
+				self.markers = markers
 			
-			filename = os.path.basename(file_path)
-			filename = filename[:-4] if ".txt" in filename else filename
-			self.decode_toolbox_json(map, markers, root_marker, {"fName" : filename})
+			if self.Is.do_read:
+				map = self.decode_toolbox_map(file_text, markers, root_marker)
+				
+				filename = os.path.basename(file_path)
+				filename = filename[:-4] if ".txt" in filename else filename
+				
+				self.decode_toolbox_json(map, markers, root_marker, {"fName" : filename})
+				
+		if not self.Is.do_read:
+			self.words_df = pandas.read_csv(self.out_path, sep=';', encoding="UTF-8-SIG", header=0).fillna("")
+		else:
+			self.words_df = pandas.DataFrame.from_records(self.words)
+			self.words_df = self.words_df.replace(r'\n','', regex=True)
 	
 	def write_toolbox_project(self):
 		if self.words:
 			if not os.path.exists(self.export_folder_path):
 				os.mkdir(self.export_folder_path)
-				
-			if self.Is.reexport:	
-				self.list_to_toolbox(self.words, markers, root_marker)
+			
+			if self.Is.reexport:
+				if self.markers is not None:
+					self.list_to_toolbox(self.words, self.markers, self.root_marker)
+				else:
+					print("Please set the values of 'markers' and 'root_marker' manually and try the export again.")
 				
 			print("saving", self.out_path)
 			print(len(self.words), "words")
-			self.words_df = pandas.DataFrame.from_records(self.words)
-			self.words_df = self.words_df.replace(r'\n','', regex=True) 
 			self.words_df.to_csv(self.out_path, sep=';', encoding="UTF-8-SIG", index=False, header=True)
 			
 			if self.log:
@@ -404,10 +439,6 @@ class ToolboxProject:
 					map = next_block(sub_string, new_marker)
 					
 					aaa[marker][this_annotation] = map
-				
-				self.marker_stack.pop()
-				
-				return aaa
 			else:
 				aaa = []
 				
@@ -415,9 +446,9 @@ class ToolboxProject:
 				for sub_string in new_subset[1:]:
 					aaa.append(next_line(sub_string, marker))
 				
-				self.marker_stack.pop()
-				
-				return aaa
+			self.marker_stack.pop()
+			
+			return aaa
 			
 		def next_line(string, marker):
 			self.marker_stack.append(marker)
@@ -631,17 +662,13 @@ class ToolboxProject:
 		
 		if not "jumps" in markers[marker]: 
 			#vgl. oben. mit dem Vorhandensein wird zwischen Id- und Record-Markern und zu interlinearisierenden Einträgen unterschieden. Bei den Text-Datenbanken ist das nativ von Toolbox vorgesehen
-			
 			for element in map[marker]:
-
 				if not element is None:
-					
 					prefix.update({marker : element})
 					self.decode_toolbox_json(map[marker][element], markers, new_marker, prefix)			
 		else:
 			ref_marker = ""
 			for element_else in map: #listen für ref-Gruppen
-				
 				if self.Is.do_filter:
 					if "ref" in prefix.keys():
 						#print(prefix["ref"] + " " + str(self.filter_ref(prefix["ref"], self.Is.do_filter)))
@@ -663,10 +690,12 @@ class ToolboxProject:
 				if self.Is.do_reload:
 					decoded_table = self.reload_original(decoded_table)
 					
-				for dictt in decoded_table:
-					#wenn die Wörter hier korrigiert werden, wird die Laufzeit um mehrere Stunden verkürzt
-					self.words.extend([word for word in self.check_word_for_consistency(dictt, markers, marker) if not word == [None]])
+				self.words.extend(decoded_table)
 					
+					#wenn die Wörter hier korrigiert werden, wird die Laufzeit um mehrere Stunden verkürzt
+					#self.words.extend([word for word in self.check_word_for_consistency(dictt, markers, marker) if not word == [None]])
+
+		
 	#gibt bei self.Is.do_check und geladenen Wörterbüchern das korrigierte Wort zurück. Wenn die Annotationen eindeutig sind, werden sie automatisch aufgefüllt, wenn nicht, bleiben sie unangetastet. Für den Fall, dass Annotationen vollkommen fehlen, können diese automatisch aufgefüllt werden, deswegen gibt die Funktion immer eine Liste von Werten zurück, die mit extend() angefügt wird.
 	spannenindex = {}		
 	def check_word_for_consistency(self, word, markers, marker):
@@ -676,11 +705,8 @@ class ToolboxProject:
 				spannenindex.update({marker : 0})
 			
 			def strip_plus(string):
-				if string is not None:
-					return string.strip('@').strip().lower() #doppeltes Strip wegen Spannenannotation und \n-Markern
-				else:
-					return None
-					
+				return string.strip('@').strip().lower() if string else None #doppeltes Strip wegen Spannenannotation und \n-Markern
+				
 			#diese Funktion läuft durch alle Marker, die Teil einer jump-Funktion sind, also die erste Zeile in einer Datenbank sind
 			#print(marker + " " + str(word[marker]) + " " + str(word))
 			for jump in markers[marker]["jumps"]:
@@ -778,7 +804,11 @@ class ToolboxProject:
 							self.log.append({**{"fixed" : jumpTo}, **word})
 							if self.Is.strict:
 								return [None]
-				
+						else:
+							self.log.append({**{"tofix" : jumpTo}, **word})
+							if self.Is.strict:
+								return [None]
+							
 				if len(word[marker]):
 					if word[marker][0] == '@':
 						spannenindex[marker] += 1
@@ -807,10 +837,212 @@ class ToolboxProject:
 			if len(word) > 4: #fName, id, ref, tx → keine Annotationen
 				return [check_word_for_consistency_(word, marker)]
 			else:
-				return automatically_annotate(word, marker)
+				return [word] # automatically_annotate(word, marker) # ich habe schlechte Erfahrungen damit gemacht, weil die im Text entstehenden Lücken sehr nervig sind, falls die Spaltenbreite durch in Zukunft hinzukommende Werte vergrößert werden muss. Dann zerhaut es Toolbox die Alignierung.
 		else:
 			return [word]
+	
+	
+	
+	def check_words_for_consistency(self):
+		#weil ich bei tieferliegenden Annotationen die Sortierung nicht garantieren kann, verwende ich die alte Funktion
 
+		def groupby(iterable, key=None): #https://docs.python.org/3/library/itertools.html#itertools.groupby
+			
+			keyfunc = (lambda x: x) if key is None else key
+			iterator = iter(iterable)
+			exhausted = False
+
+			def _grouper(target_key):
+				nonlocal curr_value, curr_key, exhausted
+				yield curr_value
+				last_key = keyfunc(curr_value) #eingefügt
+				for curr_value in iterator:
+					curr_key = keyfunc(curr_value)
+					if curr_key and target_key or last_key: #← curr_key != target_key
+						return
+					yield curr_value
+					last_key = keyfunc(curr_value) #eingefügt
+				exhausted = True
+
+			try:
+				curr_value = next(iterator)
+			except StopIteration:
+				return
+			curr_key = keyfunc(curr_value)
+
+			while not exhausted:
+				target_key = False # ← target_key = curr_key
+				curr_group = _grouper(target_key)
+				yield curr_group
+				if curr_key == target_key:
+					for _ in curr_group:
+						print("pass")
+						pass
+		
+		def strip_plus(string):
+			return str(string).strip('@').strip().lower() if string else "" #doppeltes Strip wegen Spannenannotation und \n-Markern
+				
+		def next_word_in_dict(iterable):
+			value, df = next(iterable)
+			return *value, df
+				
+		markers, root_marker = self.markers, self.root_marker
+		spannenindex = self.spannenindex
+		
+		marker = root_marker
+		while not "jumps" in markers[marker]:
+			marker = markers[marker]["mkrFollowingThis"]
+		
+		if not marker in spannenindex:
+			spannenindex.update({marker : 0})
+		
+		jumps = []
+		def scan_jumps(mkr):
+			for jump in markers[mkr].get("jumps", []):
+				jumpFrom = jump["mkr"]
+				jumpTo = jump["mkrTo"]
+				jumpToDb = jump["dbtyp"]
+				jumpOut = jump["mkrOut"]
+				
+				jumps.append({"mkr" : jumpFrom, "mkrTo" : jumpTo, "dbtyp" : jumpToDb, "mkrOut" : jumpOut})
+				
+				scan_jumps(jumpTo)
+		scan_jumps(marker)
+		jumps = pandas.DataFrame.from_records(jumps)
+		
+		print(jumps)
+		
+		words_df = self.words_df
+		
+		
+		ann_cols = list(jumps["mkrTo"]) + [marker, "id"]
+		rest_cols = [col for col in words_df if not col in ann_cols]
+		
+		#words_df["clean"] = words_df[marker].map(lambda x: str(x).replace("@", ""))
+		
+		print("Grouping span annotations...")
+		iter_words = []
+		for words in groupby(words_df.iterrows(), key=lambda x: next(iter(x[1][marker]), "") != "@" ):
+			new_word = {}
+			for index, word in words:
+				word = word.fillna("")
+				word["id"] = index
+				for key, value in word.to_dict().items():
+					old_value = new_word.setdefault(key, [])
+					new_word[key].append(value)
+			for key, value in new_word.items():
+				if key in rest_cols:
+					value = set(value)
+					if len(value) == 0:
+						new_word[key] = ""
+					elif len(value) == 1:
+						new_word[key] = set(value).pop()
+					else:
+						new_word[key] = list(value)
+					
+			iter_words.append(new_word)
+		corr_words = pandas.DataFrame.from_records(iter_words)
+		
+		corr_words = corr_words.explode(ann_cols, ignore_index=False)
+		
+		for tpl, jumpsDf  in jumps.groupby(["dbtyp", "mkr"]):
+			jumpToDb, jumpFrom = tpl
+			print(f"Comparing with database {jumpToDb}")
+			
+			main_dict = (pandas.DataFrame.from_records(self.db_words[jumpToDb])
+						.fillna("")
+						.map(strip_plus)
+						.drop_duplicates()
+			)
+			
+			main_dict_iter = iter(main_dict.groupby([jumpFrom]))
+			word_in_dict, word_in_dict_df = next_word_in_dict(main_dict_iter)
+				
+			for index, jump in jumpsDf.iterrows():
+				jumpTo = jump["mkrTo"]
+				jumpOut = jump["mkrOut"]
+				
+				words_df[[jumpFrom, jumpTo]] = words_df[[jumpFrom, jumpTo]].map(strip_plus)
+				words_df = words_df.sort_values(jumpFrom)
+				
+				for index, word in iter_words():
+					current_word = re.sub("( | )+", " ", word[jumpFrom])
+					
+					input(word_in_dict)
+					
+					while word_in_dict < current_word:
+						word_in_dict,   = next_word_in_dict(main_dict_iter)
+					
+					if word_in_dict > current_word:
+						continue
+						
+					if word_in_dict_df.shape[0] == 1:
+						#Die Annotation fehlt und wird automatisch hinzugefügt
+						if word[jumpTo] == "": 
+							word[jumpTo] = word_in_dict_df[jumpOut].iloc[0]
+							self.log.append({**{"fixed" : jumpTo}, **word.to_dict()})
+							if self.Is.strict:
+								words_df.drop(word)
+						
+						#Es gibt eine Annotation, die allerdings nicht mit der Datenbank übereinstimmt
+						elif not word[jumpTo] in word_in_dict_df[jumpOut].iloc[0].split(";"):
+							word[jumpTo] = word_in_dict_df[jumpOut].iloc[0]
+							self.log.append({**{"fixed" : jumpTo}, **word.to_dict()})
+							if self.Is.strict:
+								words_df.drop(word)
+						else:
+							#wenn alles stimmt, müssen nur Zeilenumbrüche vermieden werden
+							if word[jumpTo] and word[jumpTo][-1] == "\n":
+								word[jumpTo] = word[jumpTo][:-1]
+					else:	
+						#Die Annotation fehlt
+						if word[jumpTo] == "": 
+							self.log.append({**{"tofix" : jumpTo}, **word.to_dict()})
+							if self.Is.strict:
+								words_df.drop(word)
+						
+						#Die Annotation ist vorhanden, nichts muss getan werden
+						elif word[jumpTo] in [dbw for dba in word_in_dict_df[jumpOut] for dbw in dba.split(";")]:
+							pass
+						
+						#Die hinterlegte Annotation ist kein Substring eines Eintrags in der Datenbank
+						elif not any(word[jumpTo] in dbw for dba in word_in_dict_df[jumpOut] for dbw in dba.split(";")):	
+							self.log.append({**{"tofix" : jumpTo}, **word.to_dict()})
+							if self.Is.strict:
+								words_df.drop(word)
+
+						#Die hinterlegte Annotation ist Substring eines Eintrags in der Datenbank
+						else:
+							word_in_dict_df_ = pandas.merge(word_in_dict_df[jumpOut].apply(lambda x: pandas.Series(x.split(";"))).stack().reset_index(), word_in_dict_df.reset_index(), left_on="level_0", right_on="index")
+							
+							word_in_dict_df_ = word_in_dict_df_[word[jumpTo] in word_in_dict_df_[jumpOut]]
+							
+							if word_in_dict_df_.shape[0] == 1:
+								word[jumpTo] = word_in_dict_df_[jumpOut].iloc[0]
+								self.log.append({**{"fixed" : jumpTo}, **word.to_dict()})
+								if self.Is.strict:
+									words_df.drop(word)
+							else:
+								self.log.append({**{"tofix" : jumpTo}, **word.to_dict()})
+								if self.Is.strict:
+									words_df.drop(word)
+							
+				
+		print("done")
+		
+		if self.log:
+			df = pandas.DataFrame.from_records(self.log)
+			df = df.replace(r'\n','', regex=True)
+			df = df.sort_index()
+			
+			print("\nlength of log:")
+			print(df["id"].value_counts())
+			df.to_csv(self.log_path, sep=';', encoding="UTF-8-SIG", index=False, header=True)
+			
+		
+		
+		
+	
 	#speichert die geladenen und bearbeiteten Daten in einem lokalen Unterordner im Toolbox-Format ab		
 	def list_to_toolbox(self, words, markers, root_marker):		
 		def repl(m):
