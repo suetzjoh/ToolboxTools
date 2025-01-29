@@ -22,12 +22,12 @@ class ToolboxProject:
 		
 		self.types = {} 
 		self.db_words = {}
+		self.filters = []
 		
 		self.databases = []
 		self.db_files = []
 		self.text_files = []
 		
-		self.filter_path = ""
 		self.export_folder_path = ""
 		self.excel_export_path = ""
 		self.excel_fName = ""
@@ -174,12 +174,14 @@ class ToolboxProject:
 		
 		#filter path
 		filter_files = [file for file in csv_files if os.path.basename(file) == "filter.csv"]
-		if len(filter_files) == 1:
-			self.filter_path = filter_files[0]
-			
-		if self.filter_path:
-			self.filters = [[line.split(";")[0]+line.split(";")[1], line.split(";")[0]+line.split(";")[2], line.split(";")[3].strip()] for line in open(self.filter_path, "r", encoding="utf-8").readlines() if re.match("(.+?(?:_[IVX\d]+_)?);(\d+[a-z]?)\.(\d+[a-z]?);(\d+[a-z]?)\.(\d+[a-z]?);\S", line)]
-			
+		for filter_path in filter_files:
+			with open(filter_path, "r", encoding="utf-8") as stream:
+				filter_text = stream.readlines()
+		
+			self.filters += [[line.split(";")[0]+line.split(";")[1], line.split(";")[0]+line.split(";")[2], line.split(";")[3].strip()] for line in filter_text if re.match("(.+?(?:_[IVX\d]+_)?);(\d+[a-z]?)\.(\d+[a-z]?);(\d+[a-z]?)\.(\d+[a-z]?);\S", line)]
+		
+		
+		
 		#hier wird eine Liste mit den Datenbanktypen generiert. Die Typen werden gebraucht, um die Datenbanken einlesen zu können.
 		typ_files = {os.path.splitext(file)[0] : os.path.join(path, file) for path, dirs, files in toolbox_folder for file in files if os.path.splitext(file)[1] == ".typ"} #Name und Dateiname sollte gleich sein
 		
@@ -215,6 +217,8 @@ class ToolboxProject:
 					if match[0] == "mkr":
 						key = match[1]
 				
+				
+				key = keys["mkrFrom"]
 				if "jumps" in markers[key]: #diese Zeile resultiert darin, dass die Marker über die Datenbanken hinweg dieselben sein müssen.
 					markers[key]["jumps"].append(keys)
 				else:
@@ -223,10 +227,11 @@ class ToolboxProject:
 			
 			self.types[type_name] = [{"mkrRecord" : mkr_record, "GlossSeparator" : gloss_seperator, "markers" : [markers]}]
 		
-		txt_files = [os.path.join(path, file) for path, dirs, files in toolbox_folder for file in files if os.path.splitext(file)[1] == ".txt" and file != "ReadmeAfter.txt" and not file[-8:] == "konk.txt" or "." not in file] #Datenbanken können im Prinzip als jede Datei gespeichert werden, naheliegend sind .txt und engungslose Dateien. Das Readme und die generierten Konkordanzen (die sollten vlt. gelöscht werden) müssen ausgenommen werden
+		txt_files = [os.path.join(path, file) for path, dirs, files in toolbox_folder for file in files if os.path.splitext(file)[1] == ".txt" and file != "ReadmeAfter.txt" and not file[-8:] == "konk.txt" and not file.startswith("entries_from_") and not file.startswith("updated_") or "." not in file] #Datenbanken können im Prinzip als jede Datei gespeichert werden, naheliegend sind .txt und engungslose Dateien. Das Readme und die generierten Konkordanzen (die sollten vlt. gelöscht werden) müssen ausgenommen werden
 		
-		#das sind dann die Dateien, aus denen tatsächlich Informationen extrahiert werden	
-		self.databases = [[file, open(file, "r", encoding="UTF-8").readline().split(" ", 4)[4].strip()] for file in txt_files]
+		#das sind dann die Dateien, aus denen tatsächlich Informationen extrahiert werden
+		
+		self.databases = [[file, open(file, "r", encoding="UTF-8").readline().split(" ", 4)[4].strip()] for file in txt_files if open(file, "r", encoding="UTF-8").readline().startswith("\\_sh")]
 			#Bsp.: "\_sh v3.0  621  Text". Wichtig: doppelte Leerzeichen
 		self.db_files = [tuple for tuple in self.databases if tuple[1] != "Text"]
 		self.text_files = [tuple for tuple in self.databases if tuple[1] == "Text"]
@@ -260,11 +265,46 @@ class ToolboxProject:
 						print(dpl.to_string())
 					
 						input("press enter to continue")
-			
-				map.sort(key=lambda x: x[root_marker])
 				
-				self.db_words[typ] = map
+				map.sort(key=lambda x: x[root_marker] if x[root_marker] else "")
 				
+				if not typ in self.db_words:
+					self.db_words[typ] = map
+				else:
+					db1 = pandas.DataFrame(self.db_words[typ]).apply(lambda x: x.str.strip())
+					db2 = pandas.DataFrame(map).apply(lambda x: x.str.strip())
+					
+					db1.loc["dt"] = "\n"
+					db2.loc["dt"] = "\n"
+					
+					diff_db = db2[~db2.apply(tuple,1).isin(db1.apply(tuple,1))].reset_index(drop=True).apply(lambda x: x.astype(str) + "\n")
+					
+					if diff_db.shape[0]:
+						print("duplicate database:", file_path)
+						#input(diff_db.to_dict("records"))
+						
+						directory = self.export_folder_path
+						basename = os.path.splitext(os.path.basename(file_path))[0]
+						new_path = os.path.join(directory, "entries_from_" + basename)
+						
+						if "_slav" in file_path:
+							db1 = db2[["lm", "orig"]].set_index('lm').combine_first(db1.set_index('lm')).reset_index().apply(lambda x: x + "\n").fillna("")
+							#https://stackoverflow.com/questions/24768657/replace-column-values-based-on-another-dataframe-python-pandas-better-way
+							
+							db1.loc["dt"] = "\n"
+							
+							updated = db1.to_dict("records")
+							
+							self.db_words[typ] = updated
+							
+							new_path = os.path.join(directory, "updated_" + typ)
+							self.list_to_toolbox(updated, markers, root_marker, typ, fName=new_path)
+						
+							print(f"\nBeim Datenbanktyp {typ} wurde eine Datei für Slavismen registriert. Die Spalte orig wurde anhand der Daten aus dieser Datei überschrieben und die Datei im Arbeitsverzeichnis abgespeichert")
+						
+						print(f"\nDer Datenbanktyp {typ} kommt mehrfach vor, die Differenz der Einträge wurde im Arbeitsverzeichnis gespeichert.")
+						self.list_to_toolbox(diff_db.to_dict("records"), markers, root_marker, typ, fName=new_path)
+					
 	def read_toolbox_project(self):
 		print("Lese Dateien:")
 		for text_file in self.text_files: 
@@ -307,10 +347,8 @@ class ToolboxProject:
 		if not self.Is.do_read:
 			self.words_df = pandas.read_csv(self.out_path, sep=';', encoding="UTF-8-SIG", header=0).fillna("")
 		else:
-			self.words_df = pandas.DataFrame.from_records(self.words)
+			self.words_df = pandas.DataFrame.from_records(self.words).fillna("")
 			self.words_df = self.words_df.replace(r'\n','', regex=True).astype(str)
-			
-			input(self.words_df)
 	
 	def write_toolbox_project(self):
 		if self.words:
@@ -319,23 +357,13 @@ class ToolboxProject:
 			
 			if self.Is.reexport:
 				if self.markers is not None:
-					self.list_to_toolbox(self.words, self.markers, self.root_marker)
+					self.list_to_toolbox(self.words_df.to_dict("records"), self.markers, self.root_marker)
 				else:
 					print("Please set the values of 'markers' and 'root_marker' manually and try the export again.")
 				
 			print("saving", self.out_path)
 			print(len(self.words), "words")
 			self.words_df.to_csv(self.out_path, sep=';', encoding="UTF-8-SIG", index=False, header=True)
-			
-			if self.log:
-				df = pandas.DataFrame.from_records(self.log)
-				df = df.replace(r'\n','', regex=True)
-				
-				print("\nlength of log:")
-				print(df["fName"].value_counts())
-				df.to_csv(self.log_path, sep=';', encoding="UTF-8-SIG", index=False, header=True)
-			else:
-				print("no log\n")		
 		else:
 			if self.Is.do_read:
 				input("Die gelesenen Daten sind leer. Wurde vlt. ein falscher Filter ausgewählt? Es wurden keine Änderungen an vorher durchgeführten Exporten vorgenommen. [Enter]\n")
@@ -422,7 +450,7 @@ class ToolboxProject:
 			if "mkrFollowingThis" in markers[marker]:
 				new_marker = markers[marker]["mkrFollowingThis"]		
 			else:
-				#print(marker, this_annotation, "$")
+				print(marker, this_annotation, "$")
 				self.marker_stack.pop()
 				return 
 			
@@ -450,7 +478,6 @@ class ToolboxProject:
 					aaa.append(next_line(sub_string, marker))
 				
 			self.marker_stack.pop()
-			
 			return aaa
 			
 		def next_line(string, marker):
@@ -468,7 +495,6 @@ class ToolboxProject:
 					return {marker : this_annotation}
 				else:
 					return {marker : ""}
-			
 			
 			if "mkrFollowingThis" in markers[marker]:
 				new_marker = markers[marker]["mkrFollowingThis"]
@@ -536,7 +562,7 @@ class ToolboxProject:
 			if yy != -1:
 				max = yy 
 				#print(marker, max, current_row[max:max+1])
-				if max < len(current_row):
+				if max < len(current_row): # 32 ist der ASCII-Code für das Leerzeichen
 					if current_row[max] == 32 and "jumps" in markers[marker]:
 						#print("#", min, max, current_row[min:max+1], current_row)
 						return None
@@ -571,7 +597,7 @@ class ToolboxProject:
 						current_word = {marker : current_row[xx_:xx+1].decode("UTF-8").strip()} if cond1 else {marker : current_row[xx_:].decode("UTF-8").strip(" ")}
 						
 						#print(cond1, cond2)
-						#print(current_word)
+						#input(current_word)
 						
 						zeilen = []
 						for jump in markers[marker]["jumps"]:
@@ -695,6 +721,7 @@ class ToolboxProject:
 					
 				for dictt in decoded_table:	
 					#wenn die Wörter hier korrigiert werden, wird die Laufzeit um mehrere Stunden verkürzt
+					#die Funktion check_word_for_consistency fragt self.do_check_old ab, tut also idR gar nichts
 					self.words.extend([word for word in self.check_word_for_consistency(dictt, markers, marker) if not word == [None]])
 
 		
@@ -844,45 +871,391 @@ class ToolboxProject:
 			return [word]
 	
 	def check_words_for_consistency(self):
-		def groupby(iterable, key=None): #https://docs.python.org/3/library/itertools.html#itertools.groupby
-			
-			keyfunc = (lambda x: x) if key is None else key
-			iterator = iter(iterable)
-			exhausted = False
+		print("checking")
+		def group_method():
+			def groupby(iterable, key=None): #https://docs.python.org/3/library/itertools.html#itertools.groupby
+				
+				keyfunc = (lambda x: x) if key is None else key
+				iterator = iter(iterable)
+				exhausted = False
 
-			def _grouper(target_key):
-				nonlocal curr_value, curr_key, exhausted
-				yield curr_value
-				last_key = keyfunc(curr_value) #eingefügt
-				for curr_value in iterator:
-					curr_key = keyfunc(curr_value)
-					if curr_key and target_key or last_key: #← curr_key != target_key
-						return
+				def _grouper(target_key):
+					nonlocal curr_value, curr_key, exhausted
 					yield curr_value
 					last_key = keyfunc(curr_value) #eingefügt
-				exhausted = True
+					for curr_value in iterator:
+						curr_key = keyfunc(curr_value)
+						if curr_key and target_key or last_key: #← curr_key != target_key
+							return
+						yield curr_value
+						last_key = keyfunc(curr_value) #eingefügt
+					exhausted = True
 
-			try:
-				curr_value = next(iterator)
-			except StopIteration:
-				return
-			curr_key = keyfunc(curr_value)
+				try:
+					curr_value = next(iterator)
+				except StopIteration:
+					return
+				curr_key = keyfunc(curr_value)
 
-			while not exhausted:
-				target_key = False # ← target_key = curr_key
-				curr_group = _grouper(target_key)
-				yield curr_group
-				if curr_key == target_key:
-					for _ in curr_group:
-						print("pass")
-						pass
-		
-		def strip_save(string):
+				while not exhausted:
+					target_key = False # ← target_key = curr_key
+					curr_group = _grouper(target_key)
+					yield curr_group
+					if curr_key == target_key:
+						for _ in curr_group:
+							print("pass")
+							pass
+			
+			if any("jumps" in markers[jumpTo] for jumpTo in jumpsDf["mkrTo"]):
+				print(f"Grouping span annotations... by {jumpFrom}")
+				
+				iter_words = []
+				for words in groupby(words_df.iterrows(), key=lambda x: next(iter(x[1][jumpFrom]), "") != "@" ):
+					new_word = {}
+					for index, word in words:
+						word["old_index"] = index
+						for key, value in word.to_dict().items():
+							old_value = new_word.setdefault(key, [])
+							new_word[key].append(value)
+							
+					for key, value in new_word.items():
+						if key in rest_cols:
+							value = set(value)
+							if len(value) == 0:
+								new_word[key] = ""
+							elif len(value) == 1:
+								new_word[key] = set(value).pop()
+							else:
+								new_word[key] = list(value)
+							
+					iter_words.append(new_word)
+					
+				corr_words = pandas.DataFrame(iter_words)
+			else:
+				corr_words = words_df.copy()
+				corr_words[ann_cols] = corr_words[ann_cols].map(lambda x: [x])
+			
+			corr_words = corr_words.sort_values(jumpFrom, key=lambda x: x.apply(lambda y: strip_plus(y[-1])))
+			
+			corr_words = corr_words.explode(ann_cols, ignore_index=False)
+			corr_words = corr_words.set_index([corr_words.index, corr_words.groupby(corr_words.index).cumcount()])
+			corr_words.index.names = ["level_0", "level_1"]
+			corr_words = corr_words.reset_index(level="level_1")
+			
+			for index, jump in jumpsDf.iterrows():
+				jumpTo = jump["mkrTo"]
+				jumpOut = jump["mkrOut"]
+				next_jump = jumpOut in list(jumps["mkr"])
+				
+				print(f"Building dictionary for {jumpTo}")
+				
+				main_dict_iter = build_dict_iter(jumpToDb, jumpFrom, jumpTo, jumpOut)
+				
+				corr_words["key"] = corr_words[jumpTo]
+				corr_words[[jumpFrom]] = corr_words[[jumpFrom]].map(strip_plus)
+				corr_words[[jumpOut]] = corr_words[[jumpOut]].map(strip_safe)
+				
+				print(f"Iterating...")
+				
+				word_in_dict, word_in_dict_df = next_word_in_dict(main_dict_iter)
+				new_word = True
+				
+				for current_word, group in corr_words.groupby(jumpFrom, sort=False):
+					if self.Is.ignore_numbers and re.match("^\d+[,.]?\d*$", current_word) or not current_word:
+						continue
+						
+					while word_in_dict and word_in_dict < current_word:
+						word_in_dict, word_in_dict_df = next_word_in_dict(main_dict_iter)
+					
+						new_word = True
+					
+					if not word_in_dict_df.shape[0]:
+						for indices, word in group.iterrows():	
+							self.log.append({**{"tofix" : jumpTo}, **word.to_dict()})
+							if self.Is.strict:
+								words_df.drop(words_df[words_df["old_index"]==word["old_index"]])
+								corr_words.drop(word)
+						continue
+					
+					if new_word:
+						word_in_dict_df = pandas.merge(
+							word_in_dict_df[jumpOut].apply(lambda x: pandas.Series(x.split(";"))).stack().reset_index(), 
+							word_in_dict_df.reset_index(), 
+							left_on="level_0", 
+							right_on="index"
+						)
+						word_in_dict_df[[jumpOut]] = word_in_dict_df[[0]]
+						word_in_dict_df = word_in_dict_df.drop(columns=[0, "level_0", "level_1", "index"])
+						if next_jump:
+							word_in_dict_df[jumpOut] = word_in_dict_df[jumpOut].str.split(" ")
+						else:
+							word_in_dict_df[jumpOut] = word_in_dict_df[jumpOut].apply(lambda x: [x])
+						
+						new_word = False
+					
+					if not word_in_dict or word_in_dict > current_word:
+						for indices, word in group.iterrows():	
+							self.log.append({**{"tofix" : jumpTo + " db"}, **word.to_dict()})
+							if self.Is.strict:
+								words_df.drop(words_df[words_df["old_index"]==word["old_index"]])
+								corr_words.drop(word)
+								
+						continue
+							
+					for indices, word in group.iterrows():	
+						current_ann = word[jumpTo]
+						s_i = word["level_1"]
+						attach_next = next(iter(word["key"]), "") == "@"
+						
+						if current_word == word_in_dict and current_ann in word_in_dict_df[jumpOut].iloc[0]:
+							continue
+						
+						if word_in_dict_df.shape[0] == 1:
+							from_database = get_database_annotation(word_in_dict_df, jumpOut, s_i, attach_next)
+							if not from_database:
+								self.log.append({**{"tofix" : jumpTo + " 0"}, **word.to_dict()})
+								if self.Is.strict:
+									words_df.drop(words_df[words_df["old_index"]==word["old_index"]])
+									corr_words.drop(word)
+								continue
+							
+							
+							if current_ann == "" or not current_ann in word_in_dict_df[jumpOut].iloc[0]: 
+								words_df.loc[word["old_index"], jumpTo] = from_database
+								corr_words.loc[indices, jumpTo] = from_database
+								self.log.append({**{"fixed" : jumpTo}, **word.to_dict()})
+								if self.Is.strict:
+									words_df.drop(words_df[words_df["old_index"]==word["old_index"]])
+									corr_words.drop(word)
+							
+							else:
+								#wenn alles stimmt, müssen nur Zeilenumbrüche vermieden werden
+								if current_ann and current_ann[-1] == "\n":
+									words_df.loc[word["old_index"], jumpTo] = current_ann[:-1]
+									corr_words.loc[indices, jumpTo] = current_ann[:-1]
+									
+						elif not any(current_ann in dba for dba in word_in_dict_df[jumpOut]):
+							#self.log.append({**{"tofix" : jumpTo + " 1"}, **word.to_dict()})
+							#
+							#if self.Is.strict:
+							#	words_df.drop(words_df[words_df["old_index"]==word["old_index"]])
+							#	corr_words.drop(word)	
+							
+							common_cols = [col for col in set(word.index.to_list()).intersection(word_in_dict_df.columns.to_list()) if col not in [jumpFrom, jumpTo]]
+							if common_cols:
+								for col in common_cols:
+									word_in_dict_df_ = word_in_dict_df[word_in_dict_df[col].apply(lambda x: word[col] in x)]
+								
+								if word_in_dict_df_.shape[0] == 1:
+									from_database = get_database_annotation(word_in_dict_df_, jumpOut, s_i, attach_next)
+									
+									words_df.loc[word["old_index"], jumpTo] = from_database
+									corr_words.loc[indices, jumpTo] = from_database
+									self.log.append({**{"fixed" : jumpTo}, **word.to_dict()})
+									if self.Is.strict:
+										words_df.drop(words_df[words_df["old_index"]==word["old_index"]])
+										corr_words.drop(word)
+								else:
+									self.log.append({**{"tofix" : jumpTo}, **word.to_dict()})
+									if self.Is.strict:
+										words_df.drop(words_df[words_df["old_index"]==word["old_index"]])
+										corr_words.drop(word)
+								
+							#Die hinterlegte Annotation ist kein Substring eines Eintrags in der Datenbank
+							elif not any(current_ann in dbw for dba in word_in_dict_df[jumpOut] for dbw in dba):	
+								self.log.append({**{"tofix" : jumpTo}, **word.to_dict()})
+								if self.Is.strict:
+									words_df.drop(words_df[words_df["old_index"]==word["old_index"]])
+									corr_words.drop(word)
+									
+							#Die hinterlegte Annotation ist Substring eines Eintrags in der Datenbank
+							else:	
+								
+								word_in_dict_df_ = word_in_dict_df[word_in_dict_df[jumpOut].apply(lambda x: any(current_ann in dbw for dbw in x))]
+								
+								if word_in_dict_df_.shape[0] == 1:
+									from_database = get_database_annotation(word_in_dict_df_, jumpOut, s_i, attach_next)
+									
+									words_df.loc[word["old_index"], jumpTo] = from_database
+									corr_words.loc[indices, jumpTo] = from_database
+									self.log.append({**{"fixed" : jumpTo}, **word.to_dict()})
+									if self.Is.strict:
+										words_df.drop(words_df[words_df["old_index"]==word["old_index"]])
+										corr_words.drop(word)
+								else:
+									self.log.append({**{"tofix" : jumpTo}, **word.to_dict()})
+									if self.Is.strict:
+										words_df.drop(words_df[words_df["old_index"]==word["old_index"]])
+										corr_words.drop(word)
+							
+		def iter_method():
+			corr_words = words_df.copy()
+			corr_words = corr_words.sort_values(jumpFrom, key=lambda x: x.apply(strip_plus))
+			corr_words = corr_words.reset_index()
+			corr_words.index.names = ["level_0"]
+			
+			for index, jump in jumpsDf.iterrows():
+				jumpTo = jump["mkrTo"]
+				jumpOut = jump["mkrOut"]
+				next_jump = jumpOut in list(jumps["mkr"])
+				
+				print(f"Building dictionary for {jumpTo}")
+				
+				main_dict_iter = build_dict_iter(jumpToDb, jumpFrom, jumpTo, jumpOut)
+				
+				corr_words["key"] = corr_words[jumpTo]
+				corr_words[[jumpFrom]] = corr_words[[jumpFrom]].map(strip_plus)
+				corr_words[[jumpOut]] = corr_words[[jumpOut]].map(strip_safe)
+				
+				print(f"Iterating...")
+				
+				s_i = 0
+				attach_next = ""
+				
+				word_in_dict, word_in_dict_df = next_word_in_dict(main_dict_iter)
+				new_word = True
+				
+				for index, group in corr_words.groupby("level_0", sort=False):	
+					word = group.iloc[0]
+					
+					current_word = word[jumpFrom]
+					current_ann = word[jumpTo]
+						
+					if self.Is.ignore_numbers and re.match("^\d+[,.]?\d*$", current_word) or not current_word:
+						continue
+						
+					while word_in_dict and word_in_dict < current_word:
+						word_in_dict, word_in_dict_df = next_word_in_dict(main_dict_iter)
+						
+						new_word = True
+					
+					if not word_in_dict_df.shape[0]:
+						self.log.append({**{"tofix" : jumpTo}, **word.to_dict()})
+						if self.Is.strict:
+							words_df.drop(words_df[words_df["old_index"]==word["old_index"]])
+							corr_words.drop(word)
+						continue
+					
+					if new_word:
+						word_in_dict_df = pandas.merge(
+							word_in_dict_df[jumpOut].apply(lambda x: pandas.Series(x.split(";"))).stack().reset_index(), 
+							word_in_dict_df.reset_index(), 
+							left_on="level_0", 
+							right_on="index"
+						)
+						word_in_dict_df[[jumpOut]] = word_in_dict_df[[0]]
+						word_in_dict_df = word_in_dict_df.drop(columns=[0, "level_0", "level_1", "index"])
+						if next_jump:
+							word_in_dict_df[jumpOut] = word_in_dict_df[jumpOut].str.split(" ")
+						else:
+							word_in_dict_df[jumpOut] = word_in_dict_df[jumpOut].apply(lambda x: [x])
+						
+						new_word = False
+						
+					if word_in_dict and word_in_dict > current_word:
+						self.log.append({**{"tofix" : jumpTo + " db"}, **word.to_dict()})
+						if self.Is.strict:
+							words_df.drop(words_df[words_df["old_index"]==word["old_index"]])
+							corr_words.drop(word)
+						continue
+					
+					
+					if current_word == word_in_dict and current_ann in word_in_dict_df[jumpOut].iloc[0]:
+						continue
+					
+					if word_in_dict_df.shape[0] == 1:
+						from_database = get_database_annotation(word_in_dict_df, jumpOut, s_i, attach_next)
+						if not from_database:
+							self.log.append({**{"tofix" : jumpTo}, **word.to_dict()})
+							if self.Is.strict:
+								words_df.drop(words_df[words_df["old_index"]==word["old_index"]])
+								corr_words.drop(word)
+							continue
+						
+						if current_ann == "" or not current_ann in word_in_dict_df[jumpOut].iloc[0]: 
+							words_df.loc[word["old_index"], jumpTo] = from_database
+							corr_words.loc[index, jumpTo] = from_database
+							
+							self.log.append({**{"fixed" : jumpTo}, **word.to_dict()})
+							if self.Is.strict:
+								words_df.drop(words_df[words_df["old_index"]==word["old_index"]])
+								corr_words.drop(word)
+						
+						else:
+							#wenn alles stimmt, müssen nur Zeilenumbrüche vermieden werden
+							if current_ann and current_ann[-1] == "\n":
+								words_df.loc[word["old_index"], jumpTo] = current_ann[:-1]
+								corr_words.loc[index, jumpTo] = current_ann[:-1]
+								
+					elif not any(current_ann in dba for dba in word_in_dict_df[jumpOut]):
+						
+						self.log.append({**{"tofix" : jumpTo}, **word.to_dict()})
+						if self.Is.strict:
+							words_df.drop(words_df[words_df["old_index"]==word["old_index"]])
+							corr_words.drop(word)
+							
+						"""
+						common_cols = [col for col in set(word.index.to_list()).intersection(word_in_dict_df.columns.to_list()) if col not in [jumpFrom, jumpTo]]
+						if common_cols:
+							for col in common_cols:
+								word_in_dict_df_ = word_in_dict_df[word_in_dict_df[col].apply(lambda x: word[col] in x)]
+							
+							if word_in_dict_df_.shape[0] == 1:
+								from_database = get_database_annotation(word_in_dict_df_, jumpOut, s_i, attach_next)
+								
+								words_df.loc[word["old_index"], jumpTo] = from_database
+								corr_words.loc[index, jumpTo] = from_database
+								self.log.append({**{"fixed" : jumpTo}, **word.to_dict()})
+								if self.Is.strict:
+									words_df.drop(words_df[words_df["old_index"]==word["old_index"]])
+									corr_words.drop(word)
+							else:
+								self.log.append({**{"tofix" : jumpTo}, **word.to_dict()})
+								if self.Is.strict:
+									words_df.drop(words_df[words_df["old_index"]==word["old_index"]])
+									corr_words.drop(word)
+							
+						#Die hinterlegte Annotation ist kein Substring eines Eintrags in der Datenbank
+						elif not any(current_ann in dbw for dba in word_in_dict_df[jumpOut] for dbw in dba):	
+							self.log.append({**{"tofix" : jumpTo}, **word.to_dict()})
+							if self.Is.strict:
+								words_df.drop(words_df[words_df["old_index"]==word["old_index"]])
+								corr_words.drop(word)
+								
+						#Die hinterlegte Annotation ist Substring eines Eintrags in der Datenbank
+						else:	
+							
+							word_in_dict_df_ = word_in_dict_df[word_in_dict_df[jumpOut].apply(lambda x: any(current_ann in dbw for dbw in x))]
+							
+							if word_in_dict_df_.shape[0] == 1:
+								from_database = get_database_annotation(word_in_dict_df_, jumpOut, s_i, attach_next)
+								
+								words_df.loc[word["old_index"], jumpTo] = from_database
+								corr_words.loc[index, jumpTo] = from_database
+								self.log.append({**{"fixed" : jumpTo}, **word.to_dict()})
+								if self.Is.strict:
+									words_df.drop(words_df[words_df["old_index"]==word["old_index"]])
+									corr_words.drop(word)
+							else:
+								self.log.append({**{"tofix" : jumpTo}, **word.to_dict()})
+								if self.Is.strict:
+									words_df.drop(words_df[words_df["old_index"]==word["old_index"]])
+									corr_words.drop(word)
+						"""
+					
+					if next(iter(current_word), "") == "@":
+						attach_next = "@"
+						current_word = current_word[1:]
+						s_i += 1
+					elif s_i:
+						s_i = 0
+			
+		def strip_safe(string):
 			return string.strip()#doppeltes Strip wegen Spannenannotation und \n-Markern
 		def strip_plus(string):
 			res = str(string) if string else ""
 			res = res.strip('@').lower()
-			res = strip_save(res)
+			res = strip_safe(res)
 			res = re.sub("( | )+", " ", res)#doppeltes Strip wegen Spannenannotation und \n-Markerny)
 			return res
 				
@@ -893,6 +1266,15 @@ class ToolboxProject:
 				return " ".join(value), df
 			except StopIteration:
 				return None, pandas.DataFrame()
+		def build_dict_iter(jumpToDb, jumpFrom, jumpTo, jumpOut):
+			main_dict = pandas.DataFrame.from_records(self.db_words[jumpToDb]).fillna("")
+			main_dict["key"] = main_dict[jumpTo].str.strip()
+			main_dict[[jumpFrom]] = main_dict[[jumpFrom]].map(strip_plus)
+			main_dict[[jumpOut]] = main_dict[[jumpOut]].map(strip_safe)
+							
+			main_dict = main_dict.drop_duplicates()
+			
+			return iter(main_dict.groupby([jumpFrom], sort=True))
 		
 		def get_database_annotation(word_in_dict_df, jumpOut, s_i, attach_next):
 			lst = word_in_dict_df[jumpOut].iloc[0]
@@ -935,7 +1317,8 @@ class ToolboxProject:
 		
 		words_df = self.words_df
 		words_df["old_index"] = words_df.index
-			
+		words_df.index.names = ["level_1"]	
+	
 		ann_cols = list(jumps["mkrTo"]) + [marker, "old_index"]
 		rest_cols = [col for col in words_df if not col in ann_cols]
 
@@ -944,167 +1327,8 @@ class ToolboxProject:
 			
 			print(f"Comparing with database {jumpToDb}")	
 			
-			corr_words = words_df.copy()
-			corr_words = corr_words.sort_values(jumpFrom, key=lambda x: x.apply(strip_plus))
-			corr_words = corr_words.reset_index()
-			corr_words.index.names = ["level_0"]
+			group_method()
 			
-			for index, jump in jumpsDf.iterrows():
-				jumpTo = jump["mkrTo"]
-				jumpOut = jump["mkrOut"]
-				next_jump = jumpOut in list(jumps["mkr"])
-				
-				print(f"Building dictionary for {jumpTo}")
-				
-				main_dict = pandas.DataFrame.from_records(self.db_words[jumpToDb]).fillna("")
-				main_dict[[jumpFrom]] = main_dict[[jumpFrom]].map(strip_plus)
-				main_dict[[jumpOut]] = main_dict[[jumpOut]].map(strip_save)
-								
-				main_dict = main_dict.drop_duplicates()
-				
-				main_dict_iter = iter(main_dict.groupby([jumpFrom], sort=True))
-				word_in_dict, word_in_dict_df = next_word_in_dict(main_dict_iter)
-				new_word = True
-				
-				corr_words["key"] = corr_words[jumpFrom]
-				corr_words[[jumpFrom]] = corr_words[[jumpFrom]].map(strip_plus)
-				corr_words[[jumpOut]] = corr_words[[jumpOut]].map(strip_save)
-				
-				print(f"Iterating...")
-				
-				s_i = 0
-				attach_next = ""
-				new_word = True
-				
-				for index, group in corr_words.groupby("level_0", sort=False):	
-					word = group.iloc[0]
-					
-					current_word = word[jumpFrom]
-					
-					if self.Is.ignore_numbers and current_word.isnumeric():
-						continue
-						
-					if word_in_dict and word_in_dict > current_word:
-						self.log.append({**{"tofix" : jumpTo + " db"}, **word.to_dict()})
-						if self.Is.strict:
-							words_df.drop(words_df[words_df["old_index"]==word["old_index"]])
-							corr_words.drop(word)
-						continue
-					
-					while word_in_dict and word_in_dict < current_word:
-						word_in_dict, word_in_dict_df = next_word_in_dict(main_dict_iter)
-						
-						new_word = True
-					
-					if not word_in_dict_df.shape[0]:
-						self.log.append({**{"tofix" : jumpTo}, **word.to_dict()})
-						if self.Is.strict:
-							words_df.drop(words_df[words_df["old_index"]==word["old_index"]])
-							corr_words.drop(word)
-						continue
-					
-					if new_word:
-						if next_jump:
-							word_in_dict_df = pandas.merge(
-								word_in_dict_df[jumpOut].apply(lambda x: pandas.Series(x.split(";"))).stack().reset_index(), 
-								word_in_dict_df.reset_index(), 
-								left_on="level_0", 
-								right_on="index"
-							)
-							word_in_dict_df[[jumpOut]] = word_in_dict_df[[0]]
-							word_in_dict_df = word_in_dict_df.drop(columns=[0, "level_0", "level_1", "index"])
-							word_in_dict_df[jumpOut] = word_in_dict_df[jumpOut].str.split(" ")
-						else:
-							word_in_dict_df[jumpOut] = word_in_dict_df[jumpOut].str.split(";")
-						
-						new_word = False
-					
-					if word_in_dict_df.shape[0] == 1:
-						from_database = get_database_annotation(word_in_dict_df, jumpOut, s_i, attach_next)
-						if not from_database:
-							self.log.append({**{"tofix" : jumpTo}, **word.to_dict()})
-							if self.Is.strict:
-								words_df.drop(words_df[words_df["old_index"]==word["old_index"]])
-								corr_words.drop(word)
-							continue
-						
-						
-						if word[jumpTo] == "" or not word[jumpTo] in word_in_dict_df[jumpOut].iloc[0]: 
-							words_df.loc[word["old_index"], jumpTo] = from_database
-							corr_words.loc[index, jumpTo] = from_database
-							self.log.append({**{"fixed" : jumpTo}, **word.to_dict()})
-							if self.Is.strict:
-								words_df.drop(words_df[words_df["old_index"]==word["old_index"]])
-								corr_words.drop(word)
-						
-						else:
-							#wenn alles stimmt, müssen nur Zeilenumbrüche vermieden werden
-							if word[jumpTo] and word[jumpTo][-1] == "\n":
-								words_df.loc[word["old_index"], jumpTo] = word[jumpTo][:-1]
-								corr_words.loc[index, jumpTo] = word[jumpTo][:-1]
-								
-					elif not any(word[jumpTo] in dba for dba in word_in_dict_df[jumpOut]):
-						
-						self.log.append({**{"tofix" : jumpTo}, **word.to_dict()})
-						if self.Is.strict:
-							words_df.drop(words_df[words_df["old_index"]==word["old_index"]])
-							corr_words.drop(word)
-							
-						"""
-						common_cols = [col for col in set(word.index.to_list()).intersection(word_in_dict_df.columns.to_list()) if col not in [jumpFrom, jumpTo]]
-						if common_cols:
-							for col in common_cols:
-								word_in_dict_df_ = word_in_dict_df[word_in_dict_df[col].apply(lambda x: word[col] in x)]
-							
-							if word_in_dict_df_.shape[0] == 1:
-								from_database = get_database_annotation(word_in_dict_df_, jumpOut, s_i, attach_next)
-								
-								words_df.loc[word["old_index"], jumpTo] = from_database
-								corr_words.loc[index, jumpTo] = from_database
-								self.log.append({**{"fixed" : jumpTo}, **word.to_dict()})
-								if self.Is.strict:
-									words_df.drop(words_df[words_df["old_index"]==word["old_index"]])
-									corr_words.drop(word)
-							else:
-								self.log.append({**{"tofix" : jumpTo}, **word.to_dict()})
-								if self.Is.strict:
-									words_df.drop(words_df[words_df["old_index"]==word["old_index"]])
-									corr_words.drop(word)
-							
-						#Die hinterlegte Annotation ist kein Substring eines Eintrags in der Datenbank
-						elif not any(word[jumpTo] in dbw for dba in word_in_dict_df[jumpOut] for dbw in dba):	
-							self.log.append({**{"tofix" : jumpTo}, **word.to_dict()})
-							if self.Is.strict:
-								words_df.drop(words_df[words_df["old_index"]==word["old_index"]])
-								corr_words.drop(word)
-								
-						#Die hinterlegte Annotation ist Substring eines Eintrags in der Datenbank
-						else:	
-							
-							word_in_dict_df_ = word_in_dict_df[word_in_dict_df[jumpOut].apply(lambda x: any(word[jumpTo] in dbw for dbw in x))]
-							
-							if word_in_dict_df_.shape[0] == 1:
-								from_database = get_database_annotation(word_in_dict_df_, jumpOut, s_i, attach_next)
-								
-								words_df.loc[word["old_index"], jumpTo] = from_database
-								corr_words.loc[index, jumpTo] = from_database
-								self.log.append({**{"fixed" : jumpTo}, **word.to_dict()})
-								if self.Is.strict:
-									words_df.drop(words_df[words_df["old_index"]==word["old_index"]])
-									corr_words.drop(word)
-							else:
-								self.log.append({**{"tofix" : jumpTo}, **word.to_dict()})
-								if self.Is.strict:
-									words_df.drop(words_df[words_df["old_index"]==word["old_index"]])
-									corr_words.drop(word)
-						"""
-					
-					if next(iter(word["key"]), "") == "@":
-						attach_next = "@"
-						current_word = current_word[1:]
-						s_i += 1
-					elif s_i:
-						s_i = 0
 		print("done")
 		
 		if self.log:
@@ -1112,17 +1336,19 @@ class ToolboxProject:
 			df = df.replace(r'\n','', regex=True).fillna("")
 			
 			df.index = df["old_index"]
-			df = df.drop(columns=["old_index", "index", "key"]).drop_duplicates(subset=set(ann_cols) - set(["old_index"]))
+			df = df.drop(columns=["old_index", "level_1", "key"]) #.drop_duplicates(subset=set(ann_cols) - set(["old_index"]))
 			df = df.sort_index()
 			
-			
 			print("\nlength of log:")
-			print(df["id"].value_counts())
+			print(df[["fName", "id"]].value_counts())
 			
 			df.to_csv(self.log_path, sep=';', encoding="UTF-8-SIG", index=False, header=True)
+
+	
+	
 	
 	#speichert die geladenen und bearbeiteten Daten in einem lokalen Unterordner im Toolbox-Format ab		
-	def list_to_toolbox(self, words, markers, root_marker):		
+	def list_to_toolbox(self, words, markers, root_marker, typ="Text", fName=""):		
 		def repl(m):
 			return " " * len(m.group())
 		def last_char_after_strip(string, char):
@@ -1144,7 +1370,7 @@ class ToolboxProject:
 					
 					break
 				
-				new_block[marker] = bytes(word[marker], encoding="UTF-8") if marker in word else b''
+				new_block[marker] = bytes(word[marker], encoding="UTF-8") if marker in word and word[marker] else b''
 				
 					
 				if "mkrFollowingThis" in markers[marker]:
@@ -1196,11 +1422,11 @@ class ToolboxProject:
 			return string
 			
 		def current_file_path():
-			path = os.path.join(os.path.basename(self.toolbox_folder_path), current_file_name + ".txt")
+			path = os.path.join(self.export_folder_path, current_file_name + ".txt")
 			#path = os.path.join(toolbox_folder_path, current_file_name + "_ed.txt")
 			return path
-		current_file_name = ""
-		current_file_content = "\\_sh v3.0  621  Text\n"
+		current_file_name = fName
+		current_file_content = f"\\_sh v3.0  621  {typ}\n"
 		
 		print("\nSchreibe Dateien:")
 		
@@ -1209,7 +1435,7 @@ class ToolboxProject:
 			if not self.Is.in_one_file:
 				if current_file_name == "":
 					current_file_name = entry["fName"]
-				elif entry["fName"] != current_file_name and not current_file_name=="":
+				elif typ=="Text" and entry["fName"] != current_file_name and not current_file_name=="":
 					open(current_file_path(), "w", encoding="utf-8").write(current_file_content)
 					print(current_file_name + " written")
 					
