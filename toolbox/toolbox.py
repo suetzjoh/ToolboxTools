@@ -178,7 +178,7 @@ class ToolboxProject:
 			with open(filter_path, "r", encoding="utf-8") as stream:
 				filter_text = stream.readlines()
 		
-			self.filters += [[line.split(";")[0]+line.split(";")[1], line.split(";")[0]+line.split(";")[2], line.split(";")[3].strip()] for line in filter_text if re.match("(.+?(?:_[IVX\d]+_)?);(\d+[a-z]?)\.(\d+[a-z]?);(\d+[a-z]?)\.(\d+[a-z]?);\S", line)]
+			self.filters += [[line.split(";")[0]+line.split(";")[1], line.split(";")[0]+line.split(";")[2], line.split(";")[3].strip()] for line in filter_text if re.match("(.+?(?:_[IVX\d]+_)?);(\d+[a-z]?)(?:\.(\d+[a-z]?))?;(\d+[a-z]?)(?:\.(\d+[a-z]?))?;\S", line)]
 		
 		
 		
@@ -385,9 +385,10 @@ class ToolboxProject:
 		return post_quem, ante_quem
 	def is_in_subpart_(self, pfx_str, args):
 		post_quem, ante_quem = args
-		nr_re = re.compile("(.+?_(?:[IVX\d]+_)?)(\d+[a-z]?)\.([\d\S]+)")
-		def get_(pfx_str, index):
-			return nr_re.search(pfx_str).group(index)
+		
+		nr_re = re.compile("(.+?_(?:[IVX\d]+_)?)(\d+[a-z]?)\.([\d\S]+)?")
+		nr_re2 = re.compile("(.+?_(?:[IVX\d]+_)?)(\d+[a-z]?)")
+		
 		def get_int(pfx_str, index):
 			result = get_(pfx_str, index)
 			while len(re.match("\d+",result).group(0)) < 3:
@@ -395,18 +396,34 @@ class ToolboxProject:
 			return result.swapcase() #weil Majuskeln im Unicodeblock vor Minuskeln kommen
 		
 		if not nr_re.search(pfx_str):
-			return False
-		
-		wrong_book = get_(pfx_str, 1) != get_(post_quem, 1)
-		before_first_page = get_int(pfx_str, 2) < get_int(post_quem, 2)
-		after_last_page = get_int(pfx_str, 2) > get_int(ante_quem, 2)
-		before_first_line = get_int(pfx_str, 2) == get_int(post_quem, 2) and get_int(pfx_str, 3) < get_int(post_quem, 3)
-		after_last_line = get_int(pfx_str, 2) == get_int(ante_quem, 2) and get_int(pfx_str, 3) > get_int(ante_quem, 3)
-		
-		if (wrong_book or before_first_page or after_last_page or before_first_line or after_last_line):
-			return False
+			if not nr_re2.search(pfx_str):
+				return False
+				
+			def get_(pfx_str, index):
+				return nr_re2.search(pfx_str).group(index)
+				
+			wrong_book = get_(pfx_str, 1) != get_(post_quem, 1)
+			before_first_page = get_int(pfx_str, 2) < get_int(post_quem, 2)
+			after_last_page = get_int(pfx_str, 2) > get_int(ante_quem, 2)
+			
+			if (wrong_book or before_first_page or after_last_page):
+				return False
+			else:
+				return True
 		else:
-			return True
+			def get_(pfx_str, index):
+				return nr_re.search(pfx_str).group(index)
+			
+			wrong_book = get_(pfx_str, 1) != get_(post_quem, 1)
+			before_first_page = get_int(pfx_str, 2) < get_int(post_quem, 2)
+			after_last_page = get_int(pfx_str, 2) > get_int(ante_quem, 2)
+			before_first_line = get_int(pfx_str, 2) == get_int(post_quem, 2) and get_int(pfx_str, 3) < get_int(post_quem, 3)
+			after_last_line = get_int(pfx_str, 2) == get_int(ante_quem, 2) and get_int(pfx_str, 3) > get_int(ante_quem, 3)
+			
+			if (wrong_book or before_first_page or after_last_page or before_first_line or after_last_line):
+				return False
+			else:
+				return True
 	def filter_ref(self, pfx_str, do_filter):
 		filters = [filter for filter in self.filters if filter[2] in do_filter]
 		
@@ -719,10 +736,12 @@ class ToolboxProject:
 				if self.Is.do_reload:
 					decoded_table = self.reload_original(decoded_table)
 					
-				for dictt in decoded_table:	
+				for dictt in decoded_table:
+					#print(dictt)
+					
 					#wenn die Wörter hier korrigiert werden, wird die Laufzeit um mehrere Stunden verkürzt
 					#die Funktion check_word_for_consistency fragt self.do_check_old ab, tut also idR gar nichts
-					self.words.extend([word for word in self.check_word_for_consistency(dictt, markers, marker) if not word == [None]])
+					self.words.extend([word for word in self.check_word_for_consistency(dictt, markers, marker) if not word == [None] and not word[marker] == ""])
 
 		
 	#gibt bei self.Is.do_check und geladenen Wörterbüchern das korrigierte Wort zurück. Wenn die Annotationen eindeutig sind, werden sie automatisch aufgefüllt, wenn nicht, bleiben sie unangetastet. Für den Fall, dass Annotationen vollkommen fehlen, können diese automatisch aufgefüllt werden, deswegen gibt die Funktion immer eine Liste von Werten zurück, die mit extend() angefügt wird.
@@ -963,12 +982,12 @@ class ToolboxProject:
 				for current_word, group in corr_words.groupby(jumpFrom, sort=False):
 					if self.Is.ignore_numbers and re.match("^\d+[,.]?\d*$", current_word) or not current_word:
 						continue
-						
-					while word_in_dict and word_in_dict < current_word:
+					
+					while word_in_dict is not None and word_in_dict < current_word:
 						word_in_dict, word_in_dict_df = next_word_in_dict(main_dict_iter)
 					
 						new_word = True
-					
+						
 					if not word_in_dict_df.shape[0]:
 						for indices, word in group.iterrows():	
 							self.log.append({**{"tofix" : jumpTo}, **word.to_dict()})
@@ -1344,8 +1363,6 @@ class ToolboxProject:
 			
 			df.to_csv(self.log_path, sep=';', encoding="UTF-8-SIG", index=False, header=True)
 
-	
-	
 	
 	#speichert die geladenen und bearbeiteten Daten in einem lokalen Unterordner im Toolbox-Format ab		
 	def list_to_toolbox(self, words, markers, root_marker, typ="Text", fName=""):		

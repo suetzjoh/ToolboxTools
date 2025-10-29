@@ -10,3 +10,4 @@ sans,sanskr,sanskrit,veda D:/Hannes/Dateien/Uni/Indoiranisch/Altindisch/Sanskrit
 heth D:/Hannes/Dateien/Uni/Hethitisch/HethToolbox
 greek,griechisch,griech D:/Hannes/Dateien/Uni/Griechisch/GreekToolbox
 arm D:/Hannes/Dateien/Uni/Armenisch/ArmenianToolbox
+nur D:/Hannes/Dateien/Uni/Indoiranisch/Nuristani/NurToolbox
