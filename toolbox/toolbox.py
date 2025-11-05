@@ -714,6 +714,23 @@ class ToolboxProject:
 					self.decode_toolbox_json(map[marker][element], markers, new_marker, prefix)			
 		else:
 			ref_marker = ""
+			
+			#Übersetzungen für gesamte ref-Abschnitte die am Ende stehen sollen auf vorherige Annotationsblöcke kopiert werden
+			
+			if len(map) > 1:
+				current_trans = ""
+				
+				for ii in reversed(range(len(map))):
+					if "trans" in map[ii]:
+						if map[ii]["trans"].strip():
+							current_trans = map[ii]["trans"]
+						elif current_trans:
+							map[ii]["trans"] = current_trans
+						
+					elif current_trans:
+						map[ii].update({"trans" : current_trans})
+						
+			
 			for element_else in map: #listen für ref-Gruppen
 				if self.Is.do_filter:
 					if "ref" in prefix.keys():
@@ -728,9 +745,11 @@ class ToolboxProject:
 				
 				decoded_table = []
 				for llist in decode_words(marker, table, prefix):
+					
 					for key in [line[0] for line in table]:
 						if not key in llist[0].keys():
 							llist[0].update({key : [line for line in table if line[0] == key][0][1].decode("UTF-8").strip()})
+					
 					decoded_table += [ddict for ddict in llist]
 				
 				if self.Is.do_reload:
